@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="log_level" default="INFO" />
+  <group ns="k4a">
+    <include file="$(find azure_kinect_ros_driver)/launch/driver.launch">
+      <arg name="tf_prefix" value="k4a_" />
+      <arg name="required" value="true" />
+      <arg name="point_cloud" value="false" />
+      <arg name="rgb_point_cloud" value="false" />
+    </include>
+  </group>
+
+  <include file="$(find nn_laser_spot_tracking)/launch/docker_k4a_laser_tracking.launch">
+    <arg name="log_level" value="$(arg log_level)" />
+  </include>
+
+  <node pkg="laser_udp_bridge" type="laser_udp_bridge_node.py" name="laser_udp_bridge" output="screen" />
+</launch>

@@ -1,0 +1,6 @@
+[submodule "third_party/Azure_Kinect_ROS_Driver"]
+	path = third_party/Azure_Kinect_ROS_Driver
+	url = https://github.com/microsoft/Azure_Kinect_ROS_Driver.git
+[submodule "third_party/yolov5"]
+	path = third_party/yolov5
+	url = https://github.com/ultralytics/yolov5.git

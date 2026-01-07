@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>laser_udp_bridge</name>
+  <version>0.1.0</version>
+  <description>Publishes the laser_spot_frame transform to UDP for nn_laser_spot_tracking.</description>
+
+  <maintainer email="toridebraus@gmail.com">Davide Torielli</maintainer>
+  <author email="toridebraus@gmail.com">Davide Torielli</author>
+
+  <license>BSD</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>rospy</depend>
+  <depend>tf2_ros</depend>
+  <depend>geometry_msgs</depend>
+
+  <export/>
+</package>

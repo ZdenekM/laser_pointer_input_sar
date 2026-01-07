@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="camera" default="k4a" />
+  <arg name="image" default="rgb/image_raw" />
+  <arg name="transport" default="raw" />
+  <arg name="depth_image" default="/k4a/depth_to_rgb/image_raw" />
+  <arg name="camera_info" default="/k4a/depth_to_rgb/camera_info" />
+
+  <arg name="model_path" default="$(find nn_laser_spot_tracking)/models" />
+  <arg name="model_name" default="yolov5s6_e400_b8_tvt302010_laser_v4.pt" />
+  <arg name="yolo_path" default="$(find nn_laser_spot_tracking)/third_party/yolov5" />
+  <arg name="log_level" default="INFO" />
+
+  <arg name="dl_rate" default="30" />
+  <arg name="tracking_rate" default="100" />
+
+  <arg name="keypoint_topic" default="/nn_laser_spot_tracking/detection_output_keypoint" />
+  <arg name="laser_spot_frame" default="laser_spot_frame" />
+  <arg name="pub_out_images" default="false" />
+  <arg name="pub_out_images_all_keypoints" default="false" />
+
+  <node pkg="nn_laser_spot_tracking" name="tracking_2D"
+        type="inferNodeROS.py" output="screen" respawn="false"
+        launch-prefix="env ROSCONSOLE_CONFIG_FILE=$(find nn_laser_spot_tracking)/config/rosconsole_$(arg log_level).config">
+    <param name="model_path" value="$(arg model_path)" />
+    <param name="model_name" value="$(arg model_name)" />
+    <param name="yolo_path" value="$(arg yolo_path)" />
+
+    <param name="camera_image_topic" value="/$(arg camera)/$(arg image)" />
+    <param name="depth_image_topic" value="$(arg depth_image)" />
+    <param name="camera_info_topic" value="$(arg camera_info)" />
+    <param name="transport" value="$(arg transport)" />
+    <param name="rate" value="$(arg dl_rate)" />
+    <param name="detection_confidence_threshold" value="0.55" />
+
+    <param name="pub_out_keypoint_topic" value="$(arg keypoint_topic)" />
+    <param name="pub_out_images" value="$(arg pub_out_images)" />
+    <param name="pub_out_images_all_keypoints" value="$(arg pub_out_images_all_keypoints)" />
+    <param name="pub_out_images_topic" value="/detection_output_img" />
+  </node>
+
+</launch>

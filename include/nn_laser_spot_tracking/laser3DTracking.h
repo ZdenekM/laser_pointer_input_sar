@@ -7,11 +7,13 @@
 #include <geometry_msgs/TransformStamped.h>
 #include <ddynamic_reconfigure/ddynamic_reconfigure.h>
 
-#include <pcl_ros/point_cloud.h>
-#include <pcl_ros/transforms.h>
-#include <pcl_conversions/pcl_conversions.h>
-
 #include <nn_laser_spot_tracking/KeypointImage.h>
+#include <sensor_msgs/Image.h>
+#include <sensor_msgs/CameraInfo.h>
+#include <std_msgs/Header.h>
+#include <image_geometry/pinhole_camera_model.h>
+#include <cv_bridge/cv_bridge.h>
+#include <opencv2/core/core.hpp>
 
 #include <Eigen/Dense>
 
@@ -19,9 +21,6 @@
 
 #include <mutex>
 #include <array>
-
-
-typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
 
 namespace NNLST {
 
@@ -51,15 +50,21 @@ private:
     tf2_ros::TransformBroadcaster _tf_broadcaster;
     std::vector<geometry_msgs::TransformStamped> _ref_T_spot; //one for raw, other for filtered. tf2_ros wants vector, cant use std::array
 
-    ros::Subscriber _cloud_sub;
-    void cloudClbk(const PointCloud::ConstPtr& msg);
-    PointCloud::Ptr _cloud;  
-    std::mutex _cloud_mutex;
+    ros::Subscriber _depth_sub;
+    ros::Subscriber _info_sub;
+    void depthClbk(const sensor_msgs::ImageConstPtr& msg);
+    void infoClbk(const sensor_msgs::CameraInfoConstPtr& msg);
+    cv::Mat _depth_image;
+    std_msgs::Header _depth_header;
+    std::mutex _depth_mutex;
+    bool _has_depth = false;
+    bool _has_info = false;
+    image_geometry::PinholeCameraModel _cam_model;
 
     /***************************************************** */
 
     bool sendTransformFrom2D();
-    bool updateTransform();
+    bool updateTransform(const cv::Mat& depth_image, const std_msgs::Header& depth_header);
     
     /***************  FILTER    **********/
     NNLST::utils::FilterWrap<Eigen::Vector3d>::Ptr _laser_pos_filter;

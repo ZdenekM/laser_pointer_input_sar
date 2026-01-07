@@ -1,0 +1,21 @@
+services:
+  nn_laser_spot_tracking:
+    build: .
+    network_mode: host
+    privileged: true
+    #devices:
+    #  - "/dev/bus/usb:/dev/bus/usb"
+    #  - "/dev/dri:/dev/dri"
+    environment:
+      - DISPLAY=$DISPLAY
+      - QT_X11_NO_MITSHM=1
+      - K4A_LOG_LEVEL=4
+      - K4A_ENABLE_LOG_TO_A_FILE=1
+      - K4A_LOG_FILE_NAME=/tmp/k4a.log
+      - K4A_LOG_TO_STDOUT=1
+    ports:
+      - "5005:5005/udp"
+    volumes:
+      - /dev:/dev
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    command: ["roslaunch", "nn_laser_spot_tracking", "docker_stack.launch", "log_level:=DEBUG"]

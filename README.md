@@ -17,21 +17,22 @@ The tracking comprises two main nodes: 2D_detection for 2D neural network detect
 
 In brief:  
 The 2D_detection node will subscribe to `/$(arg camera)/$(arg image)/$(arg transport)>`  
-The 3D_tracking to `/$(arg point_cloud)`
-A TF will be broadcasted to the ROS tf tree from the point cloud reference to the `$(arg laser_spot_frame)`.
+The 3D_tracking subscribes to the aligned depth image `/$(arg depth_image)` and matching `camera_info`. A TF will be broadcasted to the ROS tf tree from the camera frame to the `$(arg laser_spot_frame)`.
 
 - Indentify the model/weights you want. Some are provided at [https://zenodo.org/records/10471835](https://zenodo.org/records/10471835). In any case they should have been trained on laser spots, obviously. Put the model you want to use in a folder, `models` folder of this repo is the default.
 
 - [Optional, but suggested] If Yolov5 is used, better to clone their [repo](https://github.com/ultralytics/yolov5/), and provide its path to the `yolo_path` argument. Otherwise, pytorch will download it every time (since the default is "ultralytics/yolov5"). If cloning, go in the folder and install the requirments: `pip install -r requirements.txt`.
 
 - Run the launch file: 
-  `roslaunch nn_laser_spot_tracking laser_tracking.launch model_name:=<> camera:=<> point_cloud:=<>`
+  `roslaunch nn_laser_spot_tracking laser_tracking.launch model_name:=<> camera:=<> depth_image:=<> camera_info:=<>`
 
 ### Launch File Arguments
 #### Required
 - **`model_name`**: Name of the neural network model, a ".pt" file, located in `model_path` folder
 - **`camera`**: Camera "ROS" name. This is used to define the topic where images are published. It is the root of the image topic name.
-- **`point_cloud`**: The name of the topic where the PointCloud is published (`pcl::PointCloud<pcl::PointXYZ>`)
+- **`depth_image`**: Topic with depth image aligned to RGB (e.g., `/k4a/depth_to_rgb/image_raw`).
+- **`camera_info`**: CameraInfo topic matching the depth image (aligned intrinsics, e.g., `/k4a/depth_to_rgb/camera_info`).
+- **`log_level`** (default: INFO): Logger level for `tracking_2D` (`INFO` or `DEBUG`). Changes `ROSCONSOLE_CONFIG_FILE` used for the node.
 
 #### Optional
 - **`model_path`** (default: "$(find nn_laser_spot_tracking)/models/"): Path to the neural network model directory.
@@ -42,7 +43,7 @@ A TF will be broadcasted to the ROS tf tree from the point cloud reference to th
 - **`tracking_rate`** (default: 100): Rate of the 3D_matching node.
 
 - **`detection_confidence_threshold`** (default: 0.55): Confidence threshold for 2D detections.
-- **`cloud_detection_max_sec_diff`** (default: 4): Maximum timestamp difference between 2D detections and point clouds. If it is bigger, results are discarded.
+- **`cloud_detection_max_sec_diff`** (default: 4): Maximum timestamp difference between 2D detections and depth image. If it is bigger, results are discarded.
 - **`position_filter_enable`** (default: true): Enable laser spot position filtering to smooth erratic movements of the laser spot.
 - **`position_filter_bw`** (default: 9): Bandwidth of the position filter.
 - **`position_filter_damping`** (default: 1): Damping factor for the position filter.
@@ -55,6 +56,14 @@ These are settable online with a [ddynamic reconfigure](https://github.com/pal-r
 - **`pub_out_images_topic`** (default: "/detection_output_img"): Topic name for publishing output images.
 - **`gdb`** (default: false): Enable GDB debugging.
 - **`rviz`** (default: false): Launch RViz visualization.
+
+## Docker prototype (Azure Kinect + UDP)
+- Prerequisites: Docker, docker compose, and an Azure Kinect device connected to the host.
+- Run everything in Docker with: `docker compose up --build`
+- The full ROS stack runs inside the container; no host-side ROS installation is required.
+- The container runs privileged with host networking for USB access to the Kinect and publishes UDP port 5005/udp to the host.
+- UDP packet layout (little-endian, 28 bytes): `uint32 seq`, `uint64 t_ros_ns`, `float32 x_m`, `float32 y_m`, `float32 z_m`, `float32 confidence`.
+- Coordinates are expressed in the `k4a_rgb_camera_link` frame; no world/table calibration is included.
 
 ## Training new models
 - See [hhcm_yolo_training](https://github.com/ADVRHumanoids/hhcm_yolo_training) repo

@@ -14,9 +14,11 @@ Header header        # Header timestamp should be acquisition time of image
 uint16 x_pixel
 uint16 y_pixel
 
+uint16 image_width   # width of the source image in pixels
+uint16 image_height  # height of the source image in pixels
+
 uint8 label 
 
 float32 confidence # This depend on the method used
-
 
 

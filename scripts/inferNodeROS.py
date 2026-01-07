@@ -6,16 +6,13 @@ Created on Fri Aug 19 10:48:52 2022
 @author: tori
 with ideas taken from https://github.com/vvasilo/yolov3_pytorch_ros/blob/master/src/yolov3_pytorch_ros/detector.py
 """
-#import sys
 import os
 import numpy as np
-import time
 
 
 # Pytorch stuff
 import torch
 import torchvision.transforms
-#from PIL import Image as PILImage
 
 #Opencv stuff
 import cv2
@@ -23,11 +20,15 @@ from cv_bridge import CvBridge, CvBridgeError
 
 # ROS imports
 import rospy
+import message_filters
+import tf2_ros
+from geometry_msgs.msg import TransformStamped
 from sensor_msgs.msg import CompressedImage as ROSCompressedImage
 from sensor_msgs.msg import Image as ROSImage
 from sensor_msgs.msg import CameraInfo
 
 from nn_laser_spot_tracking.msg import KeypointImage
+import image_geometry
 
 class getCameraInfo:
     
@@ -36,7 +37,7 @@ class getCameraInfo:
     def __init__(self, image_info_topic):
         self.sub = rospy.Subscriber(image_info_topic, CameraInfo, self.__callback)
         rospy.loginfo("waiting for camerainfo...")
-        rospy.wait_for_message(image_info_topic, CameraInfo, timeout=None)
+        rospy.wait_for_message(image_info_topic, CameraInfo, timeout=10)
         rospy.loginfo("... camerainfo arrived")
 
     def __callback(self, msg):
@@ -113,11 +114,11 @@ class YoloModel(GenericModel) :
 
         if device == 'cpu' :
             self.device = torch.device('cpu')
-            self.model = torch.hub.load(yolo_path, 'custom', source='local', path=model_path, force_reload=True, map_location=torch.device('cpu'))
+            self.model = torch.hub.load(yolo_path, 'custom', source='local', path=model_path, force_reload=True, device='cpu')
 
         elif device == 'gpu' :
             self.device = torch.device('cuda')
-            self.model = torch.hub.load(yolo_path, 'custom', source='local', path=model_path, force_reload=True)
+            self.model = torch.hub.load(yolo_path, 'custom', source='local', path=model_path, force_reload=True, device='cuda')
        
         else:
             raise Exception("Invalid device " + device)   
@@ -178,7 +179,10 @@ class DetectorManager():
 
         camera_image_topic = rospy.get_param('~camera_image_topic')
         self.camera_image_transport = rospy.get_param('~transport', 'compressed')
-        ros_image_input_topic = camera_image_topic + '/' + self.camera_image_transport
+        if self.camera_image_transport == "raw":
+            ros_image_input_topic = camera_image_topic
+        else:
+            ros_image_input_topic = camera_image_topic + '/' + self.camera_image_transport
 
         ## Detection Params
         self.detection_confidence_threshold = rospy.get_param('~detection_confidence_threshold', 0.55)
@@ -188,6 +192,7 @@ class DetectorManager():
         self.pub_out_images = rospy.get_param('~pub_out_images', True)
         self.pub_out_all_keypoints = rospy.get_param('~pub_out_images_all_keypoints', False)
         pub_out_images_topic = rospy.get_param('~pub_out_images_topic', "/detection_output_img")
+        self.laser_spot_frame = rospy.get_param('~laser_spot_frame', 'laser_spot_frame')
         
         #camera_info_topic = rospy.get_param('~camera_info_topic', '/D435_head_camera/color/camera_info')
         #getCameraInfo(camera_info_topic)
@@ -217,49 +222,59 @@ class DetectorManager():
         ############ ROS STUFF
         
         self.bridge = CvBridge()
+        depth_image_topic = rospy.get_param('~depth_image_topic')
+        camera_info_topic = rospy.get_param('~camera_info_topic')
+
         if self.camera_image_transport == "compressed":
-            self.image_sub = rospy.Subscriber(ros_image_input_topic, ROSCompressedImage,
-                                              self.__image_clbk, queue_size = 1)
-            rospy.loginfo("waiting for camera message...")
-            rospy.wait_for_message(ros_image_input_topic, ROSCompressedImage, timeout=None)
-            rospy.loginfo("... camera message arrived")
-            self.ros_image_input = ROSCompressedImage
-            
+            image_sub = message_filters.Subscriber(ros_image_input_topic, ROSCompressedImage, queue_size=1)
         else:
-            self.image_sub = rospy.Subscriber(ros_image_input_topic, ROSImage,
-                                              self.__image_clbk, queue_size = 10)
-            rospy.loginfo("waiting for camera message...")
-            rospy.wait_for_message(ros_image_input_topic, ROSImage, timeout=None)
-            rospy.loginfo("... camera message arrived")
-            self.ros_image_input = ROSImage
-            
+            image_sub = message_filters.Subscriber(ros_image_input_topic, ROSImage, queue_size=1)
+
+        depth_sub = message_filters.Subscriber(depth_image_topic, ROSImage, queue_size=1)
+        info_sub = message_filters.Subscriber(camera_info_topic, CameraInfo, queue_size=1)
+
+        sync = message_filters.ApproximateTimeSynchronizer([image_sub, depth_sub, info_sub], 5, 0.1)
+        sync.registerCallback(self.__sync_clbk)
+
         self.keypoint_pub = rospy.Publisher(pub_out_keypoint_topic, KeypointImage, queue_size=10)
-            
         if self.pub_out_images:
             self.image_pub = rospy.Publisher(pub_out_images_topic+"/compressed", ROSCompressedImage, queue_size=10)
+        self.tf_broadcaster = tf2_ros.TransformBroadcaster()
+        self.cam_model = image_geometry.PinholeCameraModel()
+        self.depth_header = None
 
 
-    def __image_clbk(self, msg):
-        
-        self.ros_image_input = msg
+    def __sync_clbk(self, rgb_msg, depth_msg, info_msg):
+        rospy.logdebug("Synced RGB/Depth/Info stamps rgb=%s depth=%s", str(rgb_msg.header.stamp), str(depth_msg.header.stamp))
         try:
             if self.camera_image_transport == "compressed":
-
-                self.cv_image_input = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding="rgb8")
-            else :
-                self.cv_image_input = self.bridge.imgmsg_to_cv2(msg, desired_encoding="rgb8")
-            
+                self.cv_image_input = self.bridge.compressed_imgmsg_to_cv2(rgb_msg, desired_encoding="rgb8")
+                self.ros_image_input = rgb_msg
+            else:
+                self.cv_image_input = self.bridge.imgmsg_to_cv2(rgb_msg, desired_encoding="rgb8")
+                self.ros_image_input = rgb_msg
         except CvBridgeError as e:
             rospy.logerror(e)
-            
+            return
+
+        try:
+            depth_cv = self.bridge.imgmsg_to_cv2(depth_msg, desired_encoding="passthrough")
+            self.depth_image = depth_cv
+            self.depth_header = depth_msg.header
+        except CvBridgeError as e:
+            rospy.logerror(e)
+            return
+
+        self.cam_model.fromCameraInfo(info_msg)
+        rospy.logdebug("Buffered rgb/depth at %s, rgb shape=%s depth shape=%s", str(rgb_msg.header.stamp), self.cv_image_input.shape, self.depth_image.shape)
         self.new_image = True
        
     def infer(self):
         
         if not self.new_image:
-            #rospy.logwarn("no new image, publishing last results")
+            if self.ros_image_input is None:
+                return False
             if (len(self.out['scores']) == 0):
-                #rospy.logwarn("no detection found at all (len is 0)")
                 self.__pubROS(self.inference_stamp)
             else:
                 self.__pubROS(self.inference_stamp, self.best_index, self.out['boxes'], self.out['scores'], self.out['labels'])
@@ -281,7 +296,7 @@ class DetectorManager():
             #images[0] = images[0].detach().cpu()
         
         if (len(self.out['scores']) == 0):
-            #rospy.logwarn("no detection found at all (len is 0)")
+            rospy.logdebug("No detections in this frame (scores empty)")
             self.__pubROS(self.inference_stamp)
             return False
         
@@ -290,7 +305,8 @@ class DetectorManager():
         
         #show_image_with_boxes(img, self.out['boxes'][self.best_index], self.out['labels'][self.best_index])
         
-        self.inference_stamp = rospy.Time.now()
+        # Keep ROS timestamps aligned with the source image
+        self.inference_stamp = self.ros_image_input.header.stamp
         self.__pubROS(self.inference_stamp, self.best_index, self.out['boxes'], self.out['scores'], self.out['labels'])
         
         self.new_image = False
@@ -300,13 +316,22 @@ class DetectorManager():
     def __pubROS(self, stamp, best_index=-1, box=None, score=None, label=None):
         
         if (best_index == -1):
-            self.__pubKeypoint(stamp)
+            kp_msg = self.__pubKeypoint(stamp)
+            if kp_msg is None:
+                return
             
             if self.pub_out_images:
                 self.__pubImageWithRectangle()
 
         else:
-            self.__pubKeypoint(stamp, box[best_index], score[best_index], label[best_index])
+            if score[best_index] < self.detection_confidence_threshold:
+                return
+
+            kp_msg = self.__pubKeypoint(stamp, box[best_index], score[best_index], label[best_index])
+            if kp_msg is None:
+                return
+            xyz = self.__compute_xyz(box[best_index])
+            self.__publish_tf(xyz, stamp)
             
             if self.pub_out_images:
                 if self.pub_out_all_keypoints:
@@ -381,9 +406,13 @@ class DetectorManager():
     def __pubKeypoint(self, stamp, box=None, score=None, label=None):
         
         msg = KeypointImage()
+        if self.ros_image_input is None:
+            return None
         msg.header.frame_id = self.ros_image_input.header.frame_id
         msg.header.seq = self.ros_image_input.header.seq
         msg.header.stamp = stamp
+        msg.image_width = self.cv_image_input.shape[1]
+        msg.image_height = self.cv_image_input.shape[0]
         
         if (not box == None) and (not score == None) and (not label == None):
         
@@ -400,6 +429,64 @@ class DetectorManager():
             msg.confidence = 0
         
         self.keypoint_pub.publish(msg)
+        return msg
+
+    def __compute_xyz(self, box):
+        if not hasattr(self, "depth_image") or self.depth_image is None:
+            return None
+        u = round(box[0].item() + (box[2].item() - box[0].item())/2)
+        v = round(box[1].item() + (box[3].item() - box[1].item())/2)
+        window_radius = 2
+        img_h, img_w = self.depth_image.shape[:2]
+        if u < 0 or v < 0 or u >= img_w or v >= img_h:
+            return None
+
+        min_u = max(0, u - window_radius)
+        max_u = min(img_w - 1, u + window_radius)
+        min_v = max(0, v - window_radius)
+        max_v = min(img_h - 1, v + window_radius)
+
+        depths = []
+        for vv in range(min_v, max_v + 1):
+            for uu in range(min_u, max_u + 1):
+                if self.depth_image.dtype == np.uint16:
+                    d = float(self.depth_image[vv, uu]) * 0.001
+                    if d <= 0:
+                        continue
+                else:
+                    d = float(self.depth_image[vv, uu])
+                    if not np.isfinite(d) or d <= 0:
+                        continue
+                depths.append(d)
+
+        if len(depths) < 5:
+            return None
+
+        depth_m = float(np.median(depths))
+        ray = self.cam_model.projectPixelTo3dRay((u, v))
+        scale = depth_m / float(ray[2])
+        x = float(ray[0] * scale)
+        y = float(ray[1] * scale)
+        z = depth_m
+        return (x, y, z)
+
+    def __publish_tf(self, xyz, stamp):
+        if xyz is None:
+            return
+        frames = [self.laser_spot_frame + "_raw", self.laser_spot_frame]
+        for child in frames:
+            t = TransformStamped()
+            t.header.stamp = stamp
+            t.header.frame_id = self.ros_image_input.header.frame_id
+            t.child_frame_id = child
+            t.transform.translation.x = xyz[0]
+            t.transform.translation.y = xyz[1]
+            t.transform.translation.z = xyz[2]
+            t.transform.rotation.w = 1.0
+            t.transform.rotation.x = 0.0
+            t.transform.rotation.y = 0.0
+            t.transform.rotation.z = 0.0
+            self.tf_broadcaster.sendTransform(t)
         
 
 if __name__=="__main__":
