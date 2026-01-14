@@ -5,6 +5,7 @@ find_package(catkin REQUIRED COMPONENTS
   rospy
   tf2_ros
   geometry_msgs
+  nn_laser_spot_tracking
 )
 
 catkin_package()

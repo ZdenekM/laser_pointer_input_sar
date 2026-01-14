@@ -7,6 +7,8 @@ Created on Fri Aug 19 10:48:52 2022
 with ideas taken from https://github.com/vvasilo/yolov3_pytorch_ros/blob/master/src/yolov3_pytorch_ros/detector.py
 """
 import os
+from collections import deque
+import threading
 import numpy as np
 
 
@@ -242,42 +244,50 @@ class DetectorManager():
         self.tf_broadcaster = tf2_ros.TransformBroadcaster()
         self.cam_model = image_geometry.PinholeCameraModel()
         self.depth_header = None
+        self.frame_queue = deque(maxlen=1)
+        self.queue_lock = threading.Lock()
 
 
     def __sync_clbk(self, rgb_msg, depth_msg, info_msg):
-        rospy.logdebug("Synced RGB/Depth/Info stamps rgb=%s depth=%s", str(rgb_msg.header.stamp), str(depth_msg.header.stamp))
+        rospy.loginfo("Synced RGB/Depth/Info stamps rgb=%s depth=%s", str(rgb_msg.header.stamp), str(depth_msg.header.stamp))
         try:
             if self.camera_image_transport == "compressed":
-                self.cv_image_input = self.bridge.compressed_imgmsg_to_cv2(rgb_msg, desired_encoding="rgb8")
-                self.ros_image_input = rgb_msg
+                cv_image_input = self.bridge.compressed_imgmsg_to_cv2(rgb_msg, desired_encoding="rgb8")
             else:
-                self.cv_image_input = self.bridge.imgmsg_to_cv2(rgb_msg, desired_encoding="rgb8")
-                self.ros_image_input = rgb_msg
+                cv_image_input = self.bridge.imgmsg_to_cv2(rgb_msg, desired_encoding="rgb8")
         except CvBridgeError as e:
             rospy.logerror(e)
             return
 
         try:
             depth_cv = self.bridge.imgmsg_to_cv2(depth_msg, desired_encoding="passthrough")
-            self.depth_image = depth_cv
-            self.depth_header = depth_msg.header
         except CvBridgeError as e:
             rospy.logerror(e)
             return
 
-        self.cam_model.fromCameraInfo(info_msg)
-        rospy.logdebug("Buffered rgb/depth at %s, rgb shape=%s depth shape=%s", str(rgb_msg.header.stamp), self.cv_image_input.shape, self.depth_image.shape)
-        self.new_image = True
+        with self.queue_lock:
+            self.frame_queue.append((cv_image_input, rgb_msg, depth_cv, depth_msg.header, info_msg))
+        rospy.logdebug("Buffered rgb/depth at %s, rgb shape=%s depth shape=%s", str(rgb_msg.header.stamp), cv_image_input.shape, depth_cv.shape)
        
     def infer(self):
         
-        if not self.new_image:
-            if self.ros_image_input is None:
+        with self.queue_lock:
+            if len(self.frame_queue) == 0:
+                if self.ros_image_input is None:
+                    rospy.loginfo_throttle(5.0, "Waiting for synced RGB/Depth/Info messages...")
+                    return False
+                rospy.loginfo_throttle(2.0, "No new synced frame yet; skipping publish")
                 return False
-            if (len(self.out['scores']) == 0):
-                self.__pubROS(self.inference_stamp)
-            else:
-                self.__pubROS(self.inference_stamp, self.best_index, self.out['boxes'], self.out['scores'], self.out['labels'])
+            cv_image_input, ros_image_input, depth_cv, depth_header, info_msg = self.frame_queue.pop()
+
+        self.cv_image_input = cv_image_input
+        self.ros_image_input = ros_image_input
+        self.depth_image = depth_cv
+        self.depth_header = depth_header
+        self.cam_model.fromCameraInfo(info_msg)
+
+        if self.ros_image_input is None:
+            rospy.loginfo_throttle(5.0, "Waiting for synced RGB/Depth/Info messages...")
             return False
         
         with torch.no_grad():
@@ -296,20 +306,21 @@ class DetectorManager():
             #images[0] = images[0].detach().cpu()
         
         if (len(self.out['scores']) == 0):
-            rospy.logdebug("No detections in this frame (scores empty)")
+            rospy.loginfo("No detections in this frame (scores empty)")
             self.__pubROS(self.inference_stamp)
             return False
         
         #IDK if the best box is always the first one, so lets the argmax
-        self.best_index = torch.argmax(self.out['scores'])
+        self.best_index = int(torch.argmax(self.out['scores']))
+        best_score = float(self.out['scores'][self.best_index].item())
+        rospy.loginfo("Detections=%d, best_score=%.3f, threshold=%.3f",
+                      len(self.out['scores']), best_score, self.detection_confidence_threshold)
         
         #show_image_with_boxes(img, self.out['boxes'][self.best_index], self.out['labels'][self.best_index])
         
         # Keep ROS timestamps aligned with the source image
         self.inference_stamp = self.ros_image_input.header.stamp
         self.__pubROS(self.inference_stamp, self.best_index, self.out['boxes'], self.out['scores'], self.out['labels'])
-        
-        self.new_image = False
         
         return True
     
@@ -324,7 +335,15 @@ class DetectorManager():
                 self.__pubImageWithRectangle()
 
         else:
-            if score[best_index] < self.detection_confidence_threshold:
+            best_score = float(score[best_index].item())
+            if best_score < self.detection_confidence_threshold:
+                rospy.loginfo("Best score %.3f below threshold %.3f; publishing empty keypoint",
+                              best_score, self.detection_confidence_threshold)
+                kp_msg = self.__pubKeypoint(stamp)
+                if kp_msg is None:
+                    return
+                if self.pub_out_images:
+                    self.__pubImageWithRectangle()
                 return
 
             kp_msg = self.__pubKeypoint(stamp, box[best_index], score[best_index], label[best_index])
@@ -348,7 +367,12 @@ class DetectorManager():
             self.model_helper.tensor_images[0].cpu(), torch.uint8).numpy().transpose([1,2,0])
         self.cv_image_output = cv2.cvtColor(self.cv_image_output, cv2.COLOR_BGR2RGB)
         
-        if (not box == None) and (score > self.detection_confidence_threshold) :
+        if (not box == None) and (score is not None):
+            score_val = float(score.item()) if torch.is_tensor(score) else float(score)
+        else:
+            score_val = None
+
+        if (not box == None) and (score_val is not None) and (score_val > self.detection_confidence_threshold):
             cv2.rectangle(self.cv_image_output, 
                           (round(box[0].item()), round(box[1].item())),
                           (round(box[2].item()), round(box[3].item())),
@@ -419,8 +443,8 @@ class DetectorManager():
             #box from model has format: [x_0, y_0, x_1, y_1]
             msg.x_pixel = round(box[0].item() + (box[2].item() - box[0].item())/2)
             msg.y_pixel = round(box[1].item() + (box[3].item()  - box[1].item())/2)
-            msg.label = label
-            msg.confidence = score
+            msg.label = int(label.item()) if torch.is_tensor(label) else int(label)
+            msg.confidence = float(score.item()) if torch.is_tensor(score) else float(score)
             
         else:
             msg.x_pixel = 0
@@ -433,12 +457,18 @@ class DetectorManager():
 
     def __compute_xyz(self, box):
         if not hasattr(self, "depth_image") or self.depth_image is None:
+            rospy.loginfo_throttle(5.0, "No depth image available; skipping xyz/TF publish")
             return None
         u = round(box[0].item() + (box[2].item() - box[0].item())/2)
         v = round(box[1].item() + (box[3].item() - box[1].item())/2)
         window_radius = 2
         img_h, img_w = self.depth_image.shape[:2]
         if u < 0 or v < 0 or u >= img_w or v >= img_h:
+            rospy.loginfo_throttle(
+                5.0,
+                "Keypoint out of depth bounds (u=%d, v=%d, w=%d, h=%d); skipping xyz/TF",
+                u, v, img_w, img_h,
+            )
             return None
 
         min_u = max(0, u - window_radius)
@@ -460,6 +490,11 @@ class DetectorManager():
                 depths.append(d)
 
         if len(depths) < 5:
+            rospy.loginfo_throttle(
+                5.0,
+                "Insufficient valid depth samples (%d) around (u=%d, v=%d); skipping xyz/TF",
+                len(depths), u, v,
+            )
             return None
 
         depth_m = float(np.median(depths))
@@ -492,6 +527,8 @@ class DetectorManager():
 if __name__=="__main__":
     # Initialize node
     rospy.init_node("tracking_2D")
+
+    rospy.loginfo("Starting node...")
     
     rate_param = rospy.get_param('~rate', 5)
 

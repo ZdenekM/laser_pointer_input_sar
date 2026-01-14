@@ -7,16 +7,15 @@
   <arg name="camera_info" default="/k4a/depth_to_rgb/camera_info" />
 
   <arg name="model_path" default="$(find nn_laser_spot_tracking)/models" />
-  <arg name="model_name" default="yolov5s6_e400_b8_tvt302010_laser_v4.pt" />
+  <arg name="model_name" default="yolov5l6_e400_b8_tvt302010_laser_v4.pt" />
   <arg name="yolo_path" default="$(find nn_laser_spot_tracking)/third_party/yolov5" />
   <arg name="log_level" default="INFO" />
 
-  <arg name="dl_rate" default="30" />
-  <arg name="tracking_rate" default="100" />
+  <arg name="dl_rate" default="5" />
 
   <arg name="keypoint_topic" default="/nn_laser_spot_tracking/detection_output_keypoint" />
   <arg name="laser_spot_frame" default="laser_spot_frame" />
-  <arg name="pub_out_images" default="false" />
+  <arg name="pub_out_images" default="true" />
   <arg name="pub_out_images_all_keypoints" default="false" />
 
   <node pkg="nn_laser_spot_tracking" name="tracking_2D"
@@ -31,7 +30,7 @@
     <param name="camera_info_topic" value="$(arg camera_info)" />
     <param name="transport" value="$(arg transport)" />
     <param name="rate" value="$(arg dl_rate)" />
-    <param name="detection_confidence_threshold" value="0.55" />
+    <param name="detection_confidence_threshold" value="0.75" />
 
     <param name="pub_out_keypoint_topic" value="$(arg keypoint_topic)" />
     <param name="pub_out_images" value="$(arg pub_out_images)" />

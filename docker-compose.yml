@@ -1,8 +1,15 @@
 services:
   nn_laser_spot_tracking:
-    build: .
+    build:
+      context: .
+      args:
+        PYTORCH_INDEX_URL: ${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
+        TORCH_VERSION: ${TORCH_VERSION:-2.0.1}
+        TORCHVISION_VERSION: ${TORCHVISION_VERSION:-0.15.2}
+        TORCH_SUFFIX: ${TORCH_SUFFIX:-+cpu}
     network_mode: host
     privileged: true
+    #gpus: all
     #devices:
     #  - "/dev/bus/usb:/dev/bus/usb"
     #  - "/dev/dri:/dev/dri"

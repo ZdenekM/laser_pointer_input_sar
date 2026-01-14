@@ -1,5 +1,10 @@
 FROM ros:noetic-ros-base
 
+ARG PYTORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
+ARG TORCH_VERSION="2.0.1"
+ARG TORCHVISION_VERSION="0.15.2"
+ARG TORCH_SUFFIX="+cpu"
+
 ENV DEBIAN_FRONTEND=noninteractive
 ENV ACCEPT_EULA=Y
 ENV LIBGL_ALWAYS_SOFTWARE=1
@@ -72,15 +77,15 @@ RUN set -e; \
     rm /tmp/libk4a1.4_1.4.2_amd64.deb /tmp/libk4a1.4-dev_1.4.2_amd64.deb /tmp/k4a-tools_1.4.2_amd64.deb; \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
+RUN pip3 install --no-cache-dir --extra-index-url ${PYTORCH_INDEX_URL} \
     typing_extensions==4.5.0 \
     numpy==1.24.4 \
-    torch==2.0.1+cpu torchvision==0.15.2+cpu
+    torch==${TORCH_VERSION}${TORCH_SUFFIX} torchvision==${TORCHVISION_VERSION}${TORCH_SUFFIX}
 
 WORKDIR /catkin_ws/src
 COPY third_party/yolov5/requirements.txt /tmp/yolov5_requirements.txt
 
-RUN pip3 install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
+RUN pip3 install --no-cache-dir --extra-index-url ${PYTORCH_INDEX_URL} \
     -r /tmp/yolov5_requirements.txt \
     "python-dateutil>=2.8.2"
 

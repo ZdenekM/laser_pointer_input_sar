@@ -1,23 +1,25 @@
-# nn_laser_spot_detection
+# nn_laser_spot_tracking
 
 ![logic scheme](./scheme/scheme.png)
 
-Detect (and practically track) in the ROS world a laser spot emitted from a common laser pointer.  
+Detect (and track) in ROS a laser spot emitted from a common laser pointer.
 
 
-## Requirments:
-- It should work on cpu only pc, but gpu (only nvidia) is preferrable
-- Pytorch with matching version of cuda. conda (please miniconda) can be used but I probably you have to install also ros in the environent to run all
-- ROS (1) 
-- If using yolov5, their requirments (see setup and running)
+## Requirements
+- ROS 1 Noetic (host) or Docker (see below).
+- Python 3.8+ with PyTorch (CUDA optional for GPU inference).
+- If using YOLOv5, a local clone is recommended (see setup).
+
+## Overview
+This repo provides:
+- `tracking_2D` node (`scripts/inferNodeROS.py`): runs the NN, consumes RGB + depth + CameraInfo, publishes `KeypointImage` and TF (`laser_spot_frame`).
+- `laser_udp_bridge` (optional): publishes the `laser_spot_frame` TF as UDP packets.
 
 
-## Setup and running
-The tracking comprises two main nodes: 2D_detection for 2D neural network detection and 3D_matching for pixel-point matching and TF broadcasting.  
-
-In brief:  
-The 2D_detection node will subscribe to `/$(arg camera)/$(arg image)/$(arg transport)>`  
-The 3D_tracking subscribes to the aligned depth image `/$(arg depth_image)` and matching `camera_info`. A TF will be broadcasted to the ROS tf tree from the camera frame to the `$(arg laser_spot_frame)`.
+## Setup and running (ROS)
+In brief:
+- `tracking_2D` subscribes to `/$(arg camera)/$(arg image)` (with `transport`), aligned depth, and matching `camera_info`.
+- It publishes a TF from the camera frame to `$(arg laser_spot_frame)` and a `KeypointImage`.
 
 - Indentify the model/weights you want. Some are provided at [https://zenodo.org/records/10471835](https://zenodo.org/records/10471835). In any case they should have been trained on laser spots, obviously. Put the model you want to use in a folder, `models` folder of this repo is the default.
 
@@ -26,49 +28,63 @@ The 3D_tracking subscribes to the aligned depth image `/$(arg depth_image)` and 
 - Run the launch file: 
   `roslaunch nn_laser_spot_tracking laser_tracking.launch model_name:=<> camera:=<> depth_image:=<> camera_info:=<>`
 
-### Launch File Arguments
+### Launch file arguments (`laser_tracking.launch`)
 #### Required
-- **`model_name`**: Name of the neural network model, a ".pt" file, located in `model_path` folder
-- **`camera`**: Camera "ROS" name. This is used to define the topic where images are published. It is the root of the image topic name.
-- **`depth_image`**: Topic with depth image aligned to RGB (e.g., `/k4a/depth_to_rgb/image_raw`).
-- **`camera_info`**: CameraInfo topic matching the depth image (aligned intrinsics, e.g., `/k4a/depth_to_rgb/camera_info`).
-- **`log_level`** (default: INFO): Logger level for `tracking_2D` (`INFO` or `DEBUG`). Changes `ROSCONSOLE_CONFIG_FILE` used for the node.
+- **`model_name`**: Name of the model `.pt` file in `model_path`.
+- **`camera`**: Camera ROS name (root of the RGB topic).
+- **`depth_image`**: Depth image aligned to RGB (e.g., `/k4a/depth_to_rgb/image_raw`).
+- **`camera_info`**: CameraInfo matching the depth image (aligned intrinsics).
 
-#### Optional
-- **`model_path`** (default: "$(find nn_laser_spot_tracking)/models/"): Path to the neural network model directory.
-- **`yolo_path`** (default "ultralytics/yolov5"): Path to the yolo repo, better to download it so you have it locally.
-- **`image`** (default: "color/image_raw"): Image topic name.
-- **`transport`** (default: "compressed"): Image transport type.
-- **`dl_rate`** (default: 30): Rate of the 2D_detection node. Note that inference part is blocking, so the node may not reach this rate
-- **`tracking_rate`** (default: 100): Rate of the 3D_matching node.
+#### Common optional
+- **`model_path`** (default: "$(find nn_laser_spot_tracking)/models/"): Path to the model directory.
+- **`yolo_path`** (default: "ultralytics/yolov5"): Local YOLOv5 repo path.
+- **`image`** (default: "color/image_raw"): RGB image topic name.
+- **`transport`** (default: "compressed" in `laser_tracking.launch`, "raw" in `docker_k4a_laser_tracking.launch`).
+- **`dl_rate`** (default: 30): Main loop rate (inference is blocking, so actual rate may be lower).
+- **`detection_confidence_threshold`** (default: 0.55): Confidence threshold for detections.
+- **`keypoint_topic`** (default: "/nn_laser_spot_tracking/detection_output_keypoint"): `KeypointImage` output.
+- **`laser_spot_frame`** (default: "laser" in `laser_tracking.launch`, "laser_spot_frame" in the docker launch).
+- **`pub_out_images`** (default: true): Publish debug images with rectangle.
+- **`pub_out_images_all_keypoints`** (default: false): Publish all detections.
+- **`pub_out_images_topic`** (default: "/detection_output_img"): Debug image topic base.
+- **`log_level`** (default: INFO, docker launch only): Logger level for `tracking_2D`.
 
-- **`detection_confidence_threshold`** (default: 0.55): Confidence threshold for 2D detections.
-- **`cloud_detection_max_sec_diff`** (default: 4): Maximum timestamp difference between 2D detections and depth image. If it is bigger, results are discarded.
-- **`position_filter_enable`** (default: true): Enable laser spot position filtering to smooth erratic movements of the laser spot.
-- **`position_filter_bw`** (default: 9): Bandwidth of the position filter.
-- **`position_filter_damping`** (default: 1): Damping factor for the position filter.
-These are settable online with a [ddynamic reconfigure](https://github.com/pal-robotics/ddynamic_reconfigure) server.
-
-- **`keypoint_topic`** (default: "/nn_laser_spot_tracking/detection_output_keypoint"): Topic with which 2D_tracking and 3D_matching communicate. Better to not touch.
-- **`laser_spot_frame`** (default: "laser_spot_frame"): Frame name for laser spot.
-- **`pub_out_images`** (default: true): Publish 2D images with rectangle on the detected laser spot.
-- **`pub_out_images_all_keypoints`** (default: false): Publish RGB 2D with all keypoints (not only the best one above the confidence threshold).
-- **`pub_out_images_topic`** (default: "/detection_output_img"): Topic name for publishing output images.
-- **`gdb`** (default: false): Enable GDB debugging.
-- **`rviz`** (default: false): Launch RViz visualization.
+#### Legacy (present in launch file but unused by `tracking_2D`)
+- **`tracking_rate`**, **`cloud_detection_max_sec_diff`**, **`position_filter_enable`**, **`position_filter_bw`**, **`position_filter_damping`**
 
 ## Docker prototype (Azure Kinect + UDP)
 - Prerequisites: Docker, docker compose, and an Azure Kinect device connected to the host.
+- Download the model `yolov5l6_e400_b8_tvt302010_laser_v4.pt` from [https://zenodo.org/records/10471835](https://zenodo.org/records/10471835) and place it in `models/` before building.
 - Run everything in Docker with: `docker compose up --build`
 - The full ROS stack runs inside the container; no host-side ROS installation is required.
 - The container runs privileged with host networking for USB access to the Kinect and publishes UDP port 5005/udp to the host.
+- The docker stack launches the Azure Kinect driver, `tracking_2D`, and `laser_udp_bridge`.
 - UDP packet layout (little-endian, 28 bytes): `uint32 seq`, `uint64 t_ros_ns`, `float32 x_m`, `float32 y_m`, `float32 z_m`, `float32 confidence`.
+- Packets are sent only when a detection exists and a valid depth/TF is available.
 - Coordinates are expressed in the `k4a_rgb_camera_link` frame; no world/table calibration is included.
+
+### GPU build (Docker)
+This image is CPU by default. To build with CUDA wheels:
+```
+export PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cu118
+export TORCH_SUFFIX=+cu118
+docker compose build
+```
+Then enable GPU runtime by uncommenting `gpus: all` in `docker-compose.yml`.
+
+### Debug images in Docker (no host ROS)
+If you want to view `/detection_output_img/compressed` from the container:
+```
+xhost +local:root
+docker exec -it -e DISPLAY=$DISPLAY <container_id> bash
+rosrun rqt_image_view rqt_image_view
+```
+Select `/detection_output_img/compressed` in the UI.
 
 ## Training new models
 - See [hhcm_yolo_training](https://github.com/ADVRHumanoids/hhcm_yolo_training) repo
 
-## Testing/compaing models
+## Testing/comparing models
 - See [benchmark](benchmark) folder
 
 ## Image dataset: 
