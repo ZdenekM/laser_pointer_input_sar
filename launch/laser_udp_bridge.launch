@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="reference_frame" default="table_frame" />
+  <arg name="target_frame" default="laser_spot_frame" />
+  <arg name="keypoint_topic" default="/nn_laser_spot_tracking/detection_output_keypoint" />
+  <arg name="rate" default="60.0" />
+  <arg name="target_host" default="127.0.0.1" />
+  <arg name="target_port" default="5005" />
+
+  <arg name="camera_frame" default="k4a_rgb_camera_link" />
+  <arg name="calibration_param_ns" default="/table_calibration" />
+
+  <arg name="http_enable" default="true" />
+  <arg name="http_bind" default="0.0.0.0" />
+  <arg name="http_port" default="8000" />
+  <arg name="http_pose_path" default="/camera_pose" />
+  <arg name="http_calibrate_path" default="/calibrate" />
+  <arg name="calibration_service" default="/aruco_table_calibration/calibrate" />
+  <arg name="calibration_service_timeout" default="2.0" />
+
+  <node pkg="laser_udp_bridge" type="laser_udp_bridge_node.py" name="laser_udp_bridge" output="screen">
+    <param name="reference_frame" value="$(arg reference_frame)" />
+    <param name="target_frame" value="$(arg target_frame)" />
+    <param name="keypoint_topic" value="$(arg keypoint_topic)" />
+    <param name="rate" value="$(arg rate)" />
+    <param name="target_host" value="$(arg target_host)" />
+    <param name="target_port" value="$(arg target_port)" />
+    <param name="camera_frame" value="$(arg camera_frame)" />
+    <param name="calibration_param_ns" value="$(arg calibration_param_ns)" />
+    <param name="http_enable" value="$(arg http_enable)" />
+    <param name="http_bind" value="$(arg http_bind)" />
+    <param name="http_port" value="$(arg http_port)" />
+    <param name="http_pose_path" value="$(arg http_pose_path)" />
+    <param name="http_calibrate_path" value="$(arg http_calibrate_path)" />
+    <param name="calibration_service" value="$(arg calibration_service)" />
+    <param name="calibration_service_timeout" value="$(arg calibration_service_timeout)" />
+  </node>
+</launch>

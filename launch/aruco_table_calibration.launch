@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="camera" default="k4a" />
+  <arg name="image" default="rgb/image_raw" />
+  <arg name="camera_image_topic" default="/$(arg camera)/$(arg image)" />
+  <arg name="camera_info_topic" default="/$(arg camera)/rgb/camera_info" />
+
+  <arg name="marker_size" default="0.1" />
+  <arg name="origin_id" default="0" />
+  <arg name="x_axis_id" default="49" />
+  <arg name="y_axis_id" default="30" />
+  <arg name="target_detections_per_marker" default="3" />
+  <arg name="capture_timeout" default="15.0" />
+  <arg name="aruco_dictionary" default="DICT_4X4_100" />
+  <arg name="origin_corner" default="lower_left" />
+  <arg name="x_axis_corner" default="lower_right" />
+  <arg name="y_axis_corner" default="upper_left" />
+  <arg name="table_frame" default="table_frame" />
+  <arg name="calibration_param_ns" default="/table_calibration" />
+  <arg name="camera_frame" default="" />
+  <arg name="log_level" default="INFO" />
+
+  <node pkg="nn_laser_spot_tracking" name="aruco_table_calibration"
+        type="aruco_table_calib_node.py" output="screen" respawn="false"
+        launch-prefix="env ROSCONSOLE_CONFIG_FILE=$(find nn_laser_spot_tracking)/config/rosconsole_$(arg log_level).config">
+    <param name="camera_image_topic" value="$(arg camera_image_topic)" />
+    <param name="camera_info_topic" value="$(arg camera_info_topic)" />
+    <param name="marker_size" value="$(arg marker_size)" />
+    <param name="origin_id" value="$(arg origin_id)" />
+    <param name="x_axis_id" value="$(arg x_axis_id)" />
+    <param name="y_axis_id" value="$(arg y_axis_id)" />
+    <param name="table_frame" value="$(arg table_frame)" />
+    <param name="target_detections_per_marker" value="$(arg target_detections_per_marker)" />
+    <param name="capture_timeout" value="$(arg capture_timeout)" />
+    <param name="aruco_dictionary" value="$(arg aruco_dictionary)" />
+    <param name="origin_corner" value="$(arg origin_corner)" />
+    <param name="x_axis_corner" value="$(arg x_axis_corner)" />
+    <param name="y_axis_corner" value="$(arg y_axis_corner)" />
+    <param name="calibration_param_ns" value="$(arg calibration_param_ns)" />
+    <param name="camera_frame" value="$(arg camera_frame)" />
+  </node>
+</launch>

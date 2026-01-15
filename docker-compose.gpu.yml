@@ -1,0 +1,13 @@
+services:
+  nn_laser_spot_tracking:
+    build:
+      args:
+        PYTORCH_INDEX_URL: ${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu118}
+        TORCH_VERSION: ${TORCH_VERSION:-2.0.1}
+        TORCHVISION_VERSION: ${TORCHVISION_VERSION:-0.15.2}
+        TORCH_SUFFIX: ${TORCH_SUFFIX:-+cu118}
+    gpus: all
+    environment:
+      - TRACKING_ENABLE=${TRACKING_ENABLE:-true}
+      # Azure Kinect FPS: valid values are 5, 15, 30.
+      - K4A_FPS=${K4A_FPS:-30}

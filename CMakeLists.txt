@@ -9,6 +9,7 @@ add_compile_options(-std=c++14)
 find_package(catkin REQUIRED COMPONENTS
     roscpp  
     rospy
+    tf
     tf2
     tf2_ros
     ddynamic_reconfigure
@@ -17,6 +18,7 @@ find_package(catkin REQUIRED COMPONENTS
     image_geometry
     geometry_msgs
     message_filters
+    std_srvs
 )
 
 ## System dependencies are found with CMake's conventions
@@ -54,7 +56,7 @@ generate_messages(
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
   INCLUDE_DIRS include
-  CATKIN_DEPENDS roscpp tf2 tf2_ros ddynamic_reconfigure sensor_msgs cv_bridge image_geometry
+  CATKIN_DEPENDS roscpp tf tf2 tf2_ros ddynamic_reconfigure sensor_msgs cv_bridge image_geometry std_srvs
 )
 
 ###########
@@ -105,6 +107,7 @@ include_directories(
 
 catkin_install_python(PROGRAMS
   scripts/inferNodeROS.py
+  scripts/aruco_table_calib_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

@@ -2,7 +2,6 @@
 <launch>
   <arg name="camera" default="k4a" />
   <arg name="image" default="rgb/image_raw" />
-  <arg name="transport" default="raw" />
   <arg name="depth_image" default="/k4a/depth_to_rgb/image_raw" />
   <arg name="camera_info" default="/k4a/depth_to_rgb/camera_info" />
 
@@ -12,11 +11,21 @@
   <arg name="log_level" default="INFO" />
 
   <arg name="dl_rate" default="5" />
+  <arg name="detection_confidence_threshold" default="0.75" />
+  <arg name="tracking_enable" default="true" />
+  <arg name="tracking_alpha" default="0.85" />
+  <arg name="tracking_beta" default="0.005" />
+  <arg name="tracking_gate_px" default="30.0" />
+  <arg name="tracking_max_prediction_frames" default="2" />
+  <arg name="tracking_reset_on_jump" default="true" />
+  <arg name="tracking_predicted_confidence_scale" default="1.0" />
+  <arg name="depth_median_window" default="3" />
 
   <arg name="keypoint_topic" default="/nn_laser_spot_tracking/detection_output_keypoint" />
   <arg name="laser_spot_frame" default="laser_spot_frame" />
   <arg name="pub_out_images" default="true" />
   <arg name="pub_out_images_all_keypoints" default="false" />
+  <arg name="pub_out_images_topic" default="/detection_output_img" />
 
   <node pkg="nn_laser_spot_tracking" name="tracking_2D"
         type="inferNodeROS.py" output="screen" respawn="false"
@@ -28,14 +37,21 @@
     <param name="camera_image_topic" value="/$(arg camera)/$(arg image)" />
     <param name="depth_image_topic" value="$(arg depth_image)" />
     <param name="camera_info_topic" value="$(arg camera_info)" />
-    <param name="transport" value="$(arg transport)" />
     <param name="rate" value="$(arg dl_rate)" />
-    <param name="detection_confidence_threshold" value="0.75" />
+    <param name="detection_confidence_threshold" value="$(arg detection_confidence_threshold)" />
+    <param name="tracking_enable" value="$(arg tracking_enable)" />
+    <param name="tracking_alpha" value="$(arg tracking_alpha)" />
+    <param name="tracking_beta" value="$(arg tracking_beta)" />
+    <param name="tracking_gate_px" value="$(arg tracking_gate_px)" />
+    <param name="tracking_max_prediction_frames" value="$(arg tracking_max_prediction_frames)" />
+    <param name="tracking_reset_on_jump" value="$(arg tracking_reset_on_jump)" />
+    <param name="tracking_predicted_confidence_scale" value="$(arg tracking_predicted_confidence_scale)" />
+    <param name="depth_median_window" value="$(arg depth_median_window)" />
 
     <param name="pub_out_keypoint_topic" value="$(arg keypoint_topic)" />
     <param name="pub_out_images" value="$(arg pub_out_images)" />
     <param name="pub_out_images_all_keypoints" value="$(arg pub_out_images_all_keypoints)" />
-    <param name="pub_out_images_topic" value="/detection_output_img" />
+    <param name="pub_out_images_topic" value="$(arg pub_out_images_topic)" />
+    <param name="laser_spot_frame" value="$(arg laser_spot_frame)" />
   </node>
-
 </launch>

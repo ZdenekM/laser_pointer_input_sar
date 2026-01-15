@@ -29,7 +29,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     python3-dev \
     python3-numpy \
-    python3-opencv \
     python3-empy \
     python3-catkin-pkg-modules \
     python3-rospkg-modules \
@@ -38,6 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-noetic-rospy \
     ros-noetic-pcl-ros \
     ros-noetic-pcl-conversions \
+    ros-noetic-tf \
     ros-noetic-tf2 \
     ros-noetic-tf2-ros \
     ros-noetic-tf2-geometry-msgs \
@@ -54,6 +54,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-noetic-joint-state-publisher \
     ros-noetic-robot-state-publisher \
     libopencv-dev \
+    libopencv-contrib-dev \
     libsoundio1 \
     libgl1-mesa-dri \
     libgl1 \
@@ -88,6 +89,16 @@ COPY third_party/yolov5/requirements.txt /tmp/yolov5_requirements.txt
 RUN pip3 install --no-cache-dir --extra-index-url ${PYTORCH_INDEX_URL} \
     -r /tmp/yolov5_requirements.txt \
     "python-dateutil>=2.8.2"
+
+RUN pip3 install --no-cache-dir --force-reinstall \
+    opencv-contrib-python==4.8.1.78
+
+RUN python3 - <<'PY'
+import cv2
+if not hasattr(cv2, "aruco") or not hasattr(cv2.aruco, "estimatePoseSingleMarkers"):
+    raise SystemExit("cv2.aruco.estimatePoseSingleMarkers missing after install")
+print("OpenCV", cv2.__version__, "aruco OK")
+PY
 
 WORKDIR /catkin_ws/src
 COPY . /catkin_ws/src/nn_laser_spot_tracking

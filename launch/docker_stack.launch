@@ -1,6 +1,16 @@
 <?xml version="1.0"?>
 <launch>
   <arg name="log_level" default="INFO" />
+  <arg name="k4a_fps" default="30" />
+  <arg name="table_frame" default="table_frame" />
+  <arg name="camera_frame" default="k4a_rgb_camera_link" />
+  <arg name="calibration_param_ns" default="/table_calibration" />
+  <arg name="http_enable" default="true" />
+  <arg name="http_bind" default="0.0.0.0" />
+  <arg name="http_port" default="8000" />
+  <arg name="http_pose_path" default="/camera_pose" />
+  <arg name="http_calibrate_path" default="/calibrate" />
+  <arg name="tracking_enable" default="true" />
   <group ns="k4a">
     <include file="$(find azure_kinect_ros_driver)/launch/driver.launch">
       <arg name="tf_prefix" value="k4a_" />
@@ -8,12 +18,30 @@
       <arg name="point_cloud" value="false" />
       <arg name="rgb_point_cloud" value="false" />
       <arg name="color_resolution" value="720P" />
+      <arg name="fps" value="$(arg k4a_fps)" />
     </include>
   </group>
 
-  <include file="$(find nn_laser_spot_tracking)/launch/docker_k4a_laser_tracking.launch">
+  <include file="$(find nn_laser_spot_tracking)/launch/tracking_2d.launch">
+    <arg name="log_level" value="$(arg log_level)" />
+    <arg name="tracking_enable" value="$(arg tracking_enable)" />
+    <arg name="dl_rate" value="$(arg k4a_fps)" />
+  </include>
+
+  <include file="$(find nn_laser_spot_tracking)/launch/aruco_table_calibration.launch">
+    <arg name="table_frame" value="$(arg table_frame)" />
+    <arg name="calibration_param_ns" value="$(arg calibration_param_ns)" />
     <arg name="log_level" value="$(arg log_level)" />
   </include>
 
-  <node pkg="laser_udp_bridge" type="laser_udp_bridge_node.py" name="laser_udp_bridge" output="screen" />
+  <include file="$(find nn_laser_spot_tracking)/launch/laser_udp_bridge.launch">
+    <arg name="reference_frame" value="$(arg table_frame)" />
+    <arg name="camera_frame" value="$(arg camera_frame)" />
+    <arg name="calibration_param_ns" value="$(arg calibration_param_ns)" />
+    <arg name="http_enable" value="$(arg http_enable)" />
+    <arg name="http_bind" value="$(arg http_bind)" />
+    <arg name="http_port" value="$(arg http_port)" />
+    <arg name="http_pose_path" value="$(arg http_pose_path)" />
+    <arg name="http_calibrate_path" value="$(arg http_calibrate_path)" />
+  </include>
 </launch>

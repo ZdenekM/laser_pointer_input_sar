@@ -3,26 +3,23 @@ services:
     build:
       context: .
       args:
-        PYTORCH_INDEX_URL: ${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
-        TORCH_VERSION: ${TORCH_VERSION:-2.0.1}
-        TORCHVISION_VERSION: ${TORCHVISION_VERSION:-0.15.2}
-        TORCH_SUFFIX: ${TORCH_SUFFIX:-+cpu}
+        PYTORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
+        TORCH_VERSION: 2.0.1
+        TORCHVISION_VERSION: 0.15.2
+        TORCH_SUFFIX: +cpu
     network_mode: host
     privileged: true
-    #gpus: all
-    #devices:
-    #  - "/dev/bus/usb:/dev/bus/usb"
-    #  - "/dev/dri:/dev/dri"
     environment:
       - DISPLAY=$DISPLAY
       - QT_X11_NO_MITSHM=1
-      - K4A_LOG_LEVEL=4
-      - K4A_ENABLE_LOG_TO_A_FILE=1
-      - K4A_LOG_FILE_NAME=/tmp/k4a.log
-      - K4A_LOG_TO_STDOUT=1
+      - PYTHONUNBUFFERED=1
+      - ROSCONSOLE_STDOUT_LINE_BUFFERED=1
+      # Azure Kinect FPS: valid values are 5, 15, 30.
+      - K4A_FPS=${K4A_FPS:-5}
+      - TRACKING_ENABLE=${TRACKING_ENABLE:-false}
     ports:
       - "5005:5005/udp"
     volumes:
       - /dev:/dev
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
-    command: ["roslaunch", "nn_laser_spot_tracking", "docker_stack.launch", "log_level:=DEBUG"]
+    command: ["roslaunch", "nn_laser_spot_tracking", "docker_stack.launch", "log_level:=DEBUG", "tracking_enable:=${TRACKING_ENABLE:-false}", "k4a_fps:=${K4A_FPS:-5}", "http_pose_path:=${HTTP_POSE_PATH:-/camera_pose}", "http_calibrate_path:=${HTTP_CALIBRATE_PATH:-/calibrate}"]

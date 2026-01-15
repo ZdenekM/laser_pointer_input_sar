@@ -7,7 +7,7 @@ import time
 def main():
     host = "127.0.0.1"
     port = 5005
-    fmt = "<IQffff"  # seq, t_ros_ns, x, y, z, confidence
+    fmt = "<IQffffI"  # seq, t_ros_ns, x, y, z, confidence, flags
     size = struct.calcsize(fmt)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -21,11 +21,13 @@ def main():
                 print(f"Skipped packet from {addr} with unexpected size {len(data)}")
                 continue
 
-            seq, t_ros_ns, x, y, z, conf = struct.unpack(fmt, data)
+            seq, t_ros_ns, x, y, z, conf, flags = struct.unpack(fmt, data)
             t_ros_s = t_ros_ns / 1e9
+            predicted = bool(flags & 1)
             print(
                 f"seq={seq:10d} t_ros={t_ros_s:20.9f}s "
-                f"x={x: .4f} y={y: .4f} z={z: .4f} conf={conf: .2f}"
+                f"x={x: .4f} y={y: .4f} z={z: .4f} conf={conf: .2f} "
+                f"predicted={predicted}"
             )
     except KeyboardInterrupt:
         print("\nInterrupted, exiting.")

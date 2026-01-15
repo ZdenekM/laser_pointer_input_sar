@@ -25,12 +25,92 @@ import rospy
 import message_filters
 import tf2_ros
 from geometry_msgs.msg import TransformStamped
-from sensor_msgs.msg import CompressedImage as ROSCompressedImage
 from sensor_msgs.msg import Image as ROSImage
 from sensor_msgs.msg import CameraInfo
 
 from nn_laser_spot_tracking.msg import KeypointImage
 import image_geometry
+
+class AlphaBetaTracker2D:
+    """Alpha-beta tracker for 2D pixel positions with gating and short prediction windows."""
+
+    def __init__(self, alpha, beta, gate_px, max_prediction_frames, reset_on_jump=True, min_dt=1e-3):
+        if not (0.0 < alpha <= 1.0):
+            raise ValueError("tracking_alpha must be in (0, 1]")
+        if beta < 0.0:
+            raise ValueError("tracking_beta must be >= 0")
+        if gate_px <= 0.0:
+            raise ValueError("tracking_gate_px must be > 0")
+        if max_prediction_frames < 0:
+            raise ValueError("tracking_max_prediction_frames must be >= 0")
+        if min_dt <= 0.0:
+            raise ValueError("tracking_min_dt must be > 0")
+
+        self.alpha = float(alpha)
+        self.beta = float(beta)
+        self.gate_px = float(gate_px)
+        self.max_prediction_frames = int(max_prediction_frames)
+        self.reset_on_jump = bool(reset_on_jump)
+        self.min_dt = float(min_dt)
+
+        self.initialized = False
+        self.pos = None
+        self.vel = np.zeros(2, dtype=np.float64)
+        self.last_stamp = None
+        self.missed_frames = 0
+
+    def reset(self):
+        self.initialized = False
+        self.pos = None
+        self.vel = np.zeros(2, dtype=np.float64)
+        self.last_stamp = None
+        self.missed_frames = 0
+
+    def update(self, measurement, stamp):
+        if measurement is None:
+            if not self.initialized:
+                return None
+            if self.missed_frames >= self.max_prediction_frames:
+                return None
+            dt = self._dt(stamp)
+            self.pos = self.pos + self.vel * dt
+            self.last_stamp = stamp
+            self.missed_frames += 1
+            return {"pos": self.pos.copy(), "predicted": True, "reset": False}
+
+        measurement = np.array(measurement, dtype=np.float64)
+        if not self.initialized:
+            self.pos = measurement
+            self.vel = np.zeros(2, dtype=np.float64)
+            self.last_stamp = stamp
+            self.missed_frames = 0
+            self.initialized = True
+            return {"pos": self.pos.copy(), "predicted": False, "reset": True}
+
+        dt = self._dt(stamp)
+        pred_pos = self.pos + self.vel * dt
+        residual = measurement - pred_pos
+
+        if self.reset_on_jump and np.linalg.norm(residual) > self.gate_px:
+            self.pos = measurement
+            self.vel = np.zeros(2, dtype=np.float64)
+            self.last_stamp = stamp
+            self.missed_frames = 0
+            return {"pos": self.pos.copy(), "predicted": False, "reset": True}
+
+        self.pos = pred_pos + self.alpha * residual
+        self.vel = self.vel + (self.beta / dt) * residual
+        self.last_stamp = stamp
+        self.missed_frames = 0
+        return {"pos": self.pos.copy(), "predicted": False, "reset": False}
+
+    def _dt(self, stamp):
+        if self.last_stamp is None:
+            return self.min_dt
+        dt = (stamp - self.last_stamp).to_sec()
+        if dt <= 0.0:
+            dt = self.min_dt
+        return dt
 
 class getCameraInfo:
     
@@ -180,14 +260,31 @@ class DetectorManager():
         yolo_path = rospy.get_param('~yolo_path', "ultralytics/yolov5")
 
         camera_image_topic = rospy.get_param('~camera_image_topic')
-        self.camera_image_transport = rospy.get_param('~transport', 'compressed')
-        if self.camera_image_transport == "raw":
-            ros_image_input_topic = camera_image_topic
-        else:
-            ros_image_input_topic = camera_image_topic + '/' + self.camera_image_transport
+        transport_param = rospy.get_param('~transport', 'raw')
+        if transport_param != "raw":
+            raise ValueError("Only raw image transport is supported (transport=raw)")
+        ros_image_input_topic = camera_image_topic
 
         ## Detection Params
         self.detection_confidence_threshold = rospy.get_param('~detection_confidence_threshold', 0.55)
+
+        ## Tracking Params
+        self.tracking_enable = rospy.get_param('~tracking_enable', True)
+        if not isinstance(self.tracking_enable, bool):
+            raise ValueError("tracking_enable must be a boolean")
+        tracking_alpha = rospy.get_param('~tracking_alpha', 0.85)
+        tracking_beta = rospy.get_param('~tracking_beta', 0.005)
+        tracking_gate_px = rospy.get_param('~tracking_gate_px', 30.0)
+        tracking_max_prediction_frames = rospy.get_param('~tracking_max_prediction_frames', 2)
+        tracking_reset_on_jump = rospy.get_param('~tracking_reset_on_jump', True)
+        self.tracking_predicted_confidence_scale = rospy.get_param('~tracking_predicted_confidence_scale', 1.0)
+
+        ## Depth filter Params
+        self.depth_median_window = int(rospy.get_param('~depth_median_window', 3))
+        if self.depth_median_window < 1 or self.depth_median_window % 2 == 0:
+            raise ValueError("depth_median_window must be an odd integer >= 1")
+        if self.tracking_predicted_confidence_scale <= 0.0:
+            raise ValueError("tracking_predicted_confidence_scale must be > 0")
         
         ### Output Params
         pub_out_keypoint_topic = rospy.get_param('~pub_out_keypoint_topic', "/detection_output_keypoint")
@@ -227,10 +324,7 @@ class DetectorManager():
         depth_image_topic = rospy.get_param('~depth_image_topic')
         camera_info_topic = rospy.get_param('~camera_info_topic')
 
-        if self.camera_image_transport == "compressed":
-            image_sub = message_filters.Subscriber(ros_image_input_topic, ROSCompressedImage, queue_size=1)
-        else:
-            image_sub = message_filters.Subscriber(ros_image_input_topic, ROSImage, queue_size=1)
+        image_sub = message_filters.Subscriber(ros_image_input_topic, ROSImage, queue_size=1)
 
         depth_sub = message_filters.Subscriber(depth_image_topic, ROSImage, queue_size=1)
         info_sub = message_filters.Subscriber(camera_info_topic, CameraInfo, queue_size=1)
@@ -240,21 +334,31 @@ class DetectorManager():
 
         self.keypoint_pub = rospy.Publisher(pub_out_keypoint_topic, KeypointImage, queue_size=10)
         if self.pub_out_images:
-            self.image_pub = rospy.Publisher(pub_out_images_topic+"/compressed", ROSCompressedImage, queue_size=10)
+            self.image_pub = rospy.Publisher(pub_out_images_topic, ROSImage, queue_size=10)
         self.tf_broadcaster = tf2_ros.TransformBroadcaster()
         self.cam_model = image_geometry.PinholeCameraModel()
         self.depth_header = None
         self.frame_queue = deque(maxlen=1)
         self.queue_lock = threading.Lock()
+        self.depth_history = deque(maxlen=self.depth_median_window)
+        self.last_label = 0
+        self.last_confidence = 0.0
+
+        self.tracker = None
+        if self.tracking_enable:
+            self.tracker = AlphaBetaTracker2D(
+                tracking_alpha,
+                tracking_beta,
+                tracking_gate_px,
+                tracking_max_prediction_frames,
+                tracking_reset_on_jump,
+            )
 
 
     def __sync_clbk(self, rgb_msg, depth_msg, info_msg):
         rospy.loginfo("Synced RGB/Depth/Info stamps rgb=%s depth=%s", str(rgb_msg.header.stamp), str(depth_msg.header.stamp))
         try:
-            if self.camera_image_transport == "compressed":
-                cv_image_input = self.bridge.compressed_imgmsg_to_cv2(rgb_msg, desired_encoding="rgb8")
-            else:
-                cv_image_input = self.bridge.imgmsg_to_cv2(rgb_msg, desired_encoding="rgb8")
+            cv_image_input = self.bridge.imgmsg_to_cv2(rgb_msg, desired_encoding="rgb8")
         except CvBridgeError as e:
             rospy.logerror(e)
             return
@@ -307,7 +411,8 @@ class DetectorManager():
         
         if (len(self.out['scores']) == 0):
             rospy.loginfo("No detections in this frame (scores empty)")
-            self.__pubROS(self.inference_stamp)
+            self.inference_stamp = self.ros_image_input.header.stamp
+            self.__publish_tracking(self.inference_stamp, None)
             return False
         
         #IDK if the best box is always the first one, so lets the argmax
@@ -320,45 +425,111 @@ class DetectorManager():
         
         # Keep ROS timestamps aligned with the source image
         self.inference_stamp = self.ros_image_input.header.stamp
-        self.__pubROS(self.inference_stamp, self.best_index, self.out['boxes'], self.out['scores'], self.out['labels'])
-        
+        if best_score < self.detection_confidence_threshold:
+            rospy.loginfo("Best score %.3f below threshold %.3f; skipping measurement",
+                          best_score, self.detection_confidence_threshold)
+            self.__publish_tracking(self.inference_stamp, None)
+            return True
+
+        measurement = self.__box_center(self.out['boxes'][self.best_index])
+        self.__publish_tracking(
+            self.inference_stamp,
+            measurement,
+            self.out['labels'][self.best_index],
+            self.out['scores'][self.best_index],
+            self.out['boxes'][self.best_index],
+            self.out['boxes'],
+            self.out['labels'],
+        )
         return True
-    
-    def __pubROS(self, stamp, best_index=-1, box=None, score=None, label=None):
-        
-        if (best_index == -1):
+
+    def __publish_tracking(self, stamp, measurement, label=None, score=None, box=None, boxes=None, labels=None):
+        tracking = self.__update_tracking(stamp, measurement, label, score)
+        if tracking is None:
             kp_msg = self.__pubKeypoint(stamp)
             if kp_msg is None:
                 return
-            
+            self.__reset_depth_history()
             if self.pub_out_images:
                 self.__pubImageWithRectangle()
+            return
 
-        else:
-            best_score = float(score[best_index].item())
-            if best_score < self.detection_confidence_threshold:
-                rospy.loginfo("Best score %.3f below threshold %.3f; publishing empty keypoint",
-                              best_score, self.detection_confidence_threshold)
-                kp_msg = self.__pubKeypoint(stamp)
-                if kp_msg is None:
-                    return
-                if self.pub_out_images:
-                    self.__pubImageWithRectangle()
-                return
+        kp_msg = self.__pubKeypoint(
+            stamp,
+            tracking["pixel"],
+            tracking["confidence"],
+            tracking["label"],
+            tracking["predicted"],
+        )
+        if kp_msg is None:
+            if self.tracker is not None:
+                self.tracker.reset()
+            self.__reset_depth_history()
+            return
 
-            kp_msg = self.__pubKeypoint(stamp, box[best_index], score[best_index], label[best_index])
-            if kp_msg is None:
-                return
-            xyz = self.__compute_xyz(box[best_index])
-            self.__publish_tf(xyz, stamp)
-            
-            if self.pub_out_images:
-                if self.pub_out_all_keypoints:
-                    self.__pubImageWithAllRectangles(box, label)
-                else:
-                    self.__pubImageWithRectangle(box[best_index], score[best_index], label[best_index])
-                
-            
+        xyz = self.__compute_xyz(tracking["pixel"])
+        self.__publish_tf(xyz, stamp)
+
+        if self.pub_out_images:
+            if measurement is None:
+                self.__pubImageWithRectangle()
+            elif self.pub_out_all_keypoints and boxes is not None and labels is not None:
+                self.__pubImageWithAllRectangles(boxes, labels)
+            else:
+                self.__pubImageWithRectangle(box, score, label)
+
+    def __update_tracking(self, stamp, measurement, label, score):
+        if measurement is None:
+            if self.tracker is None:
+                return None
+            result = self.tracker.update(None, stamp)
+            if result is None:
+                return None
+            if result["reset"]:
+                self.__reset_depth_history()
+            confidence = self.last_confidence * self.tracking_predicted_confidence_scale
+            return {
+                "pixel": result["pos"],
+                "predicted": True,
+                "confidence": confidence,
+                "label": self.last_label,
+            }
+
+        if score is None or label is None:
+            raise ValueError("Measurement provided without label/score")
+        confidence = float(score.item()) if torch.is_tensor(score) else float(score)
+        self.last_label = label
+        self.last_confidence = confidence
+
+        if self.tracker is None:
+            return {
+                "pixel": measurement,
+                "predicted": False,
+                "confidence": confidence,
+                "label": label,
+            }
+
+        result = self.tracker.update(measurement, stamp)
+        if result is None:
+            return None
+        if result["reset"]:
+            self.__reset_depth_history()
+        return {
+            "pixel": result["pos"],
+            "predicted": result["predicted"],
+            "confidence": confidence,
+            "label": label,
+        }
+
+    def __reset_depth_history(self):
+        self.depth_history.clear()
+
+    def __box_center(self, box):
+        if box is None:
+            return None
+        u = round(box[0].item() + (box[2].item() - box[0].item()) / 2)
+        v = round(box[1].item() + (box[3].item() - box[1].item()) / 2)
+        return (u, v)
 
     def __pubImageWithRectangle(self, box=None, score=None, label=None):
         
@@ -386,7 +557,7 @@ class DetectorManager():
         #cv2.imshow("test_boxes", self.cv_image_output)
         #cv2.waitKey()
         
-        self.ros_image_output = self.bridge.cv2_to_compressed_imgmsg(self.cv_image_output)
+        self.ros_image_output = self.bridge.cv2_to_imgmsg(self.cv_image_output, encoding="rgb8")
         self.ros_image_output.header.seq = self.ros_image_input.header.seq
         self.ros_image_output.header.frame_id = self.ros_image_input.header.frame_id
         self.ros_image_output.header.stamp = rospy.Time.now()
@@ -416,7 +587,7 @@ class DetectorManager():
         #cv2.imshow("test_boxes", self.cv_image_output)
         #cv2.waitKey()
         
-        self.ros_image_output = self.bridge.cv2_to_compressed_imgmsg(self.cv_image_output)
+        self.ros_image_output = self.bridge.cv2_to_imgmsg(self.cv_image_output, encoding="rgb8")
         self.ros_image_output.header.seq = self.ros_image_input.header.seq
         self.ros_image_output.header.frame_id = self.ros_image_input.header.frame_id
         self.ros_image_output.header.stamp = rospy.Time.now()
@@ -425,10 +596,10 @@ class DetectorManager():
 
             
     """
-    box is tensor and may be still float, we round befor filling the msg
-    """        
-    def __pubKeypoint(self, stamp, box=None, score=None, label=None):
-        
+    pixel coordinates are rounded and validated against image bounds.
+    """
+    def __pubKeypoint(self, stamp, pixel=None, confidence=0.0, label=0, predicted=False):
+
         msg = KeypointImage()
         if self.ros_image_input is None:
             return None
@@ -437,30 +608,41 @@ class DetectorManager():
         msg.header.stamp = stamp
         msg.image_width = self.cv_image_input.shape[1]
         msg.image_height = self.cv_image_input.shape[0]
-        
-        if (not box == None) and (not score == None) and (not label == None):
-        
-            #box from model has format: [x_0, y_0, x_1, y_1]
-            msg.x_pixel = round(box[0].item() + (box[2].item() - box[0].item())/2)
-            msg.y_pixel = round(box[1].item() + (box[3].item()  - box[1].item())/2)
-            msg.label = int(label.item()) if torch.is_tensor(label) else int(label)
-            msg.confidence = float(score.item()) if torch.is_tensor(score) else float(score)
-            
-        else:
+
+        if pixel is None:
             msg.x_pixel = 0
             msg.y_pixel = 0
             msg.label = 0
-            msg.confidence = 0
-        
+            msg.confidence = 0.0
+            msg.predicted = False
+            self.keypoint_pub.publish(msg)
+            return msg
+
+        x, y = int(round(pixel[0])), int(round(pixel[1]))
+        if x < 0 or y < 0 or x >= msg.image_width or y >= msg.image_height:
+            rospy.logwarn(
+                "Keypoint pixel out of bounds (x=%d, y=%d, w=%d, h=%d); dropping output",
+                x, y, msg.image_width, msg.image_height,
+            )
+            return None
+
+        msg.x_pixel = x
+        msg.y_pixel = y
+        msg.label = int(label.item()) if torch.is_tensor(label) else int(label)
+        msg.confidence = float(confidence)
+        msg.predicted = bool(predicted)
+
         self.keypoint_pub.publish(msg)
         return msg
 
-    def __compute_xyz(self, box):
+    def __compute_xyz(self, pixel):
         if not hasattr(self, "depth_image") or self.depth_image is None:
             rospy.loginfo_throttle(5.0, "No depth image available; skipping xyz/TF publish")
             return None
-        u = round(box[0].item() + (box[2].item() - box[0].item())/2)
-        v = round(box[1].item() + (box[3].item() - box[1].item())/2)
+        if pixel is None:
+            return None
+        u = int(round(pixel[0]))
+        v = int(round(pixel[1]))
         window_radius = 2
         img_h, img_w = self.depth_image.shape[:2]
         if u < 0 or v < 0 or u >= img_w or v >= img_h:
@@ -489,7 +671,7 @@ class DetectorManager():
                         continue
                 depths.append(d)
 
-        if len(depths) < 5:
+        if len(depths) < 3:
             rospy.loginfo_throttle(
                 5.0,
                 "Insufficient valid depth samples (%d) around (u=%d, v=%d); skipping xyz/TF",
@@ -498,6 +680,9 @@ class DetectorManager():
             return None
 
         depth_m = float(np.median(depths))
+        if self.depth_median_window > 1:
+            self.depth_history.append(depth_m)
+            depth_m = float(np.median(self.depth_history))
         ray = self.cam_model.projectPixelTo3dRay((u, v))
         scale = depth_m / float(ray[2])
         x = float(ray[0] * scale)

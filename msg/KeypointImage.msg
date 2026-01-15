@@ -20,5 +20,5 @@ uint16 image_height  # height of the source image in pixels
 uint8 label 
 
 float32 confidence # This depend on the method used
-
+bool predicted # True if the keypoint is predicted (no measurement in this frame)
 
