@@ -20,6 +20,20 @@
   <arg name="tracking_reset_on_jump" default="true" />
   <arg name="tracking_predicted_confidence_scale" default="1.0" />
   <arg name="depth_median_window" default="3" />
+  <arg name="depth_history_max_age" default="1.0" />
+  <arg name="depth_frame_history_size" default="7" />
+  <arg name="depth_tracking_enable" default="true" />
+  <arg name="depth_tracking_alpha" default="0.7" />
+  <arg name="depth_tracking_beta" default="0.02" />
+  <arg name="depth_tracking_gate_m" default="0.2" />
+  <arg name="depth_tracking_max_prediction_frames" default="2" />
+  <arg name="depth_tracking_reset_on_jump" default="true" />
+  <arg name="depth_fallback_plane_enable" default="true" />
+  <arg name="depth_fallback_plane_frame" default="table_frame" />
+  <arg name="depth_fallback_plane_timeout" default="0.05" />
+  <arg name="require_table_calibration" default="true" />
+  <arg name="table_frame" default="table_frame" />
+  <arg name="calibration_param_ns" default="/table_calibration" />
 
   <arg name="keypoint_topic" default="/nn_laser_spot_tracking/detection_output_keypoint" />
   <arg name="laser_spot_frame" default="laser_spot_frame" />
@@ -48,6 +62,20 @@
     <param name="tracking_reset_on_jump" value="$(arg tracking_reset_on_jump)" />
     <param name="tracking_predicted_confidence_scale" value="$(arg tracking_predicted_confidence_scale)" />
     <param name="depth_median_window" value="$(arg depth_median_window)" />
+    <param name="depth_history_max_age" value="$(arg depth_history_max_age)" />
+    <param name="depth_frame_history_size" value="$(arg depth_frame_history_size)" />
+    <param name="depth_tracking_enable" value="$(arg depth_tracking_enable)" />
+    <param name="depth_tracking_alpha" value="$(arg depth_tracking_alpha)" />
+    <param name="depth_tracking_beta" value="$(arg depth_tracking_beta)" />
+    <param name="depth_tracking_gate_m" value="$(arg depth_tracking_gate_m)" />
+    <param name="depth_tracking_max_prediction_frames" value="$(arg depth_tracking_max_prediction_frames)" />
+    <param name="depth_tracking_reset_on_jump" value="$(arg depth_tracking_reset_on_jump)" />
+    <param name="depth_fallback_plane_enable" value="$(arg depth_fallback_plane_enable)" />
+    <param name="depth_fallback_plane_frame" value="$(arg depth_fallback_plane_frame)" />
+    <param name="depth_fallback_plane_timeout" value="$(arg depth_fallback_plane_timeout)" />
+    <param name="require_table_calibration" value="$(arg require_table_calibration)" />
+    <param name="table_frame" value="$(arg table_frame)" />
+    <param name="calibration_param_ns" value="$(arg calibration_param_ns)" />
 
     <param name="pub_out_keypoint_topic" value="$(arg keypoint_topic)" />
     <param name="pub_out_images" value="$(arg pub_out_images)" />

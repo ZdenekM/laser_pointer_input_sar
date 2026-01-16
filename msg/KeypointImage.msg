@@ -21,4 +21,4 @@ uint8 label
 
 float32 confidence # This depend on the method used
 bool predicted # True if the keypoint is predicted (no measurement in this frame)
-
+bool depth_assumed_plane # True if depth is unavailable and the point is projected onto the table plane

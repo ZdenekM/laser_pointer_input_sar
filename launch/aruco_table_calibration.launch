@@ -19,6 +19,7 @@
   <arg name="calibration_param_ns" default="/table_calibration" />
   <arg name="camera_frame" default="" />
   <arg name="log_level" default="INFO" />
+  <arg name="calibration_store_path" default="/data/table_calibration.json" />
   <arg name="required" default="true" />
 
   <node pkg="nn_laser_spot_tracking" name="aruco_table_calibration"
@@ -39,5 +40,6 @@
     <param name="y_axis_corner" value="$(arg y_axis_corner)" />
     <param name="calibration_param_ns" value="$(arg calibration_param_ns)" />
     <param name="camera_frame" value="$(arg camera_frame)" />
+    <param name="calibration_store_path" value="$(arg calibration_store_path)" />
   </node>
 </launch>

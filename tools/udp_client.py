@@ -24,10 +24,11 @@ def main():
             seq, t_ros_ns, x, y, z, conf, flags = struct.unpack(fmt, data)
             t_ros_s = t_ros_ns / 1e9
             predicted = bool(flags & 1)
+            depth_assumed_plane = bool(flags & 2)
             print(
                 f"seq={seq:10d} t_ros={t_ros_s:20.9f}s "
                 f"x={x: .4f} y={y: .4f} z={z: .4f} conf={conf: .2f} "
-                f"predicted={predicted}"
+                f"predicted={predicted} depth_assumed_plane={depth_assumed_plane}"
             )
     except KeyboardInterrupt:
         print("\nInterrupted, exiting.")

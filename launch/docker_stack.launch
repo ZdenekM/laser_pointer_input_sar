@@ -4,6 +4,16 @@
   <arg name="k4a_fps" default="30" />
   <arg name="color_resolution" default="720P" />
   <arg name="nodes_required" default="true" />
+  <arg name="depth_history_max_age" default="1.0" />
+  <arg name="depth_frame_history_size" default="7" />
+  <arg name="depth_tracking_enable" default="true" />
+  <arg name="depth_tracking_alpha" default="0.7" />
+  <arg name="depth_tracking_beta" default="0.02" />
+  <arg name="depth_tracking_gate_m" default="0.2" />
+  <arg name="depth_tracking_max_prediction_frames" default="2" />
+  <arg name="depth_tracking_reset_on_jump" default="true" />
+  <arg name="depth_fallback_plane_enable" default="true" />
+  <arg name="depth_fallback_plane_timeout" default="0.05" />
   <arg name="table_frame" default="table_frame" />
   <arg name="camera_frame" default="k4a_rgb_camera_link" />
   <arg name="calibration_param_ns" default="/table_calibration" />
@@ -17,6 +27,7 @@
   <arg name="projector_calibration_plane_rms_tolerance_m" default="0.01" />
   <arg name="projector_calibration_full3d_min_depth_m" default="0.01" />
   <arg name="tracking_enable" default="true" />
+  <arg name="table_calibration_store_path" default="/data/table_calibration.json" />
   <group ns="k4a">
     <include file="$(find azure_kinect_ros_driver)/launch/driver.launch">
       <arg name="tf_prefix" value="k4a_" />
@@ -34,6 +45,20 @@
     <arg name="log_level" value="$(arg log_level)" />
     <arg name="tracking_enable" value="$(arg tracking_enable)" />
     <arg name="dl_rate" value="$(arg k4a_fps)" />
+    <arg name="depth_history_max_age" value="$(arg depth_history_max_age)" />
+    <arg name="depth_frame_history_size" value="$(arg depth_frame_history_size)" />
+    <arg name="depth_tracking_enable" value="$(arg depth_tracking_enable)" />
+    <arg name="depth_tracking_alpha" value="$(arg depth_tracking_alpha)" />
+    <arg name="depth_tracking_beta" value="$(arg depth_tracking_beta)" />
+    <arg name="depth_tracking_gate_m" value="$(arg depth_tracking_gate_m)" />
+    <arg name="depth_tracking_max_prediction_frames" value="$(arg depth_tracking_max_prediction_frames)" />
+    <arg name="depth_tracking_reset_on_jump" value="$(arg depth_tracking_reset_on_jump)" />
+    <arg name="depth_fallback_plane_enable" value="$(arg depth_fallback_plane_enable)" />
+    <arg name="depth_fallback_plane_frame" value="$(arg table_frame)" />
+    <arg name="depth_fallback_plane_timeout" value="$(arg depth_fallback_plane_timeout)" />
+    <arg name="require_table_calibration" value="true" />
+    <arg name="table_frame" value="$(arg table_frame)" />
+    <arg name="calibration_param_ns" value="$(arg calibration_param_ns)" />
     <arg name="required" value="$(arg nodes_required)" />
   </include>
 
@@ -41,6 +66,7 @@
     <arg name="table_frame" value="$(arg table_frame)" />
     <arg name="calibration_param_ns" value="$(arg calibration_param_ns)" />
     <arg name="log_level" value="$(arg log_level)" />
+    <arg name="calibration_store_path" value="$(arg table_calibration_store_path)" />
     <arg name="required" value="$(arg nodes_required)" />
   </include>
 

@@ -24,6 +24,7 @@ This project is based on https://github.com/ADVRHumanoids/nn_laser_spot_tracking
 - Set Kinect FPS with `K4A_FPS=5|15|30` (also used for `dl_rate`).
 - Set color resolution with `COLOR_RESOLUTION=720P|1080P|1440P|1536P|2160P|3072P`.
 - Control whether roslaunch exits when any node dies with `NODES_REQUIRED=true|false`.
+- Table calibration is saved to `TABLE_CALIBRATION_PATH` (default `/data/table_calibration.json`).
 - The full ROS stack runs inside the container; no host-side ROS installation is required.
 
 ### GPU build (Docker)
@@ -44,7 +45,8 @@ Select `/detection_output_img` in the UI.
 ## Outputs
 ### UDP
 - Port: `5005/udp` by default (see `docker-compose.yml`).
-- Packet layout (little-endian, 32 bytes): `uint32 seq`, `uint64 t_ros_ns`, `float32 x_m`, `float32 y_m`, `float32 z_m`, `float32 confidence`, `uint32 flags` (bit0 = predicted).
+- Packet layout (little-endian, 32 bytes): `uint32 seq`, `uint64 t_ros_ns`, `float32 x_m`, `float32 y_m`, `float32 z_m`, `float32 confidence`, `uint32 flags` (bit0 = predicted, bit1 = depth_assumed_plane).
+- Table calibration is required; UDP/HTTP laser point outputs are disabled until it is available.
 - Packets are sent only when a detection exists and a valid depth/TF is available.
 - Coordinates are expressed in the `table_frame` after calibration (or in `reference_frame` when configured otherwise).
 
@@ -71,6 +73,10 @@ Run calibration (default service name):
 ```
 rosservice call /aruco_table_calibration/calibrate
 ```
+HTTP trigger:
+```
+curl -X POST http://<host>:8000/calibrate
+```
 
 Notes:
 - Requires OpenCV ArUco module (opencv-contrib). The Docker image installs `opencv-contrib-python`.
@@ -82,6 +88,7 @@ Notes:
 Parameters (rosparams for `aruco_table_calibration`):
 - `target_detections_per_marker` (default: 15)
 - `capture_timeout` (default: 15.0 s)
+- `calibration_store_path` (default: `/data/table_calibration.json`)
 
 ## Projector calibration (HTTP)
 Planar (homography) and full 3D (projection matrix) calibration based on `projector_pixel <-> world_point` correspondences.
@@ -140,7 +147,20 @@ Notes:
 - **`tracking_max_prediction_frames`** (default: 2): Max predicted frames without measurement.
 - **`tracking_reset_on_jump`** (default: true): Reset tracker when jump exceeds gate.
 - **`tracking_predicted_confidence_scale`** (default: 1.0): Confidence scale for predicted frames.
-- **`depth_median_window`** (default: 3): Temporal median window for depth (odd >= 1).
+- **`depth_history_max_age`** (default: 1.0): Max age (s) for cached depth frames.
+- **`depth_frame_history_size`** (default: 7): Number of recent depth frames used to collect samples around the pixel.
+- **`depth_tracking_enable`** (default: true): Enable alpha-beta tracking on depth values.
+- **`depth_tracking_alpha`** (default: 0.7): Alpha for depth tracking.
+- **`depth_tracking_beta`** (default: 0.02): Beta for depth tracking.
+- **`depth_tracking_gate_m`** (default: 0.2): Gating threshold (m) for depth tracking resets.
+- **`depth_tracking_max_prediction_frames`** (default: 2): Max predicted frames without depth measurement.
+- **`depth_tracking_reset_on_jump`** (default: true): Reset depth tracker when jump exceeds gate.
+- **`depth_fallback_plane_enable`** (default: true): If depth is missing, project the ray onto the table plane.
+- **`depth_fallback_plane_frame`** (default: "table_frame"): Frame defining the table plane (z=0).
+- **`depth_fallback_plane_timeout`** (default: 0.05): TF lookup timeout for plane fallback (s).
+- **`require_table_calibration`** (default: true): Skip inference until table calibration is available.
+- **`table_frame`** (default: "table_frame"): Table frame used for calibration checks.
+- **`calibration_param_ns`** (default: "/table_calibration"): Namespace used to verify calibration params.
 
 ## Models and training
 - Place model weights in `models/`.

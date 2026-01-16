@@ -25,6 +25,7 @@ services:
       - HTTP_CALIBRATE_PATH=/calibrate
       - HTTP_PROJECTOR_CALIBRATION_PATH=/projector_calibration
       - PROJECTOR_CALIBRATION_PATH=/data/projector_calibration.json
+      - TABLE_CALIBRATION_PATH=/data/table_calibration.json
     ports:
       - "5005:5005/udp"
     volumes:
@@ -45,3 +46,4 @@ services:
         http_calibrate_path:=$${HTTP_CALIBRATE_PATH}
         http_projector_calibration_path:=$${HTTP_PROJECTOR_CALIBRATION_PATH}
         projector_calibration_path:=$${PROJECTOR_CALIBRATION_PATH}
+        table_calibration_store_path:=$${TABLE_CALIBRATION_PATH}

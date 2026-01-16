@@ -4,6 +4,8 @@
 Aruco-based table calibration with on-demand capture and TF publication.
 """
 
+import json
+import os
 import threading
 
 import cv2
@@ -41,6 +43,10 @@ class ArucoTableCalibrator:
         self.x_axis_corner = rospy.get_param("~x_axis_corner", "lower_right")
         self.y_axis_corner = rospy.get_param("~y_axis_corner", "upper_left")
         self.calibration_param_ns = rospy.get_param("~calibration_param_ns", "/table_calibration")
+        self.calibration_store_path = rospy.get_param(
+            "~calibration_store_path",
+            "/data/table_calibration.json",
+        )
 
         self.table_frame = rospy.get_param("~table_frame", "table_frame")
         self.camera_frame_override = rospy.get_param("~camera_frame", "")
@@ -78,6 +84,7 @@ class ArucoTableCalibrator:
 
         self.tf_broadcaster = tf2_ros.StaticTransformBroadcaster()
 
+        self._load_calibration_from_disk()
         self._setup_subscribers()
         self._setup_services()
         rospy.loginfo(
@@ -93,12 +100,13 @@ class ArucoTableCalibrator:
             self._image_callback,
             queue_size=1,
         )
-        self.info_sub = rospy.Subscriber(
-            self.camera_info_topic,
-            CameraInfo,
-            self._info_callback,
-            queue_size=1,
-        )
+        try:
+            info_msg = rospy.wait_for_message(self.camera_info_topic, CameraInfo, timeout=10.0)
+        except rospy.ROSException as exc:
+            raise RuntimeError(
+                "CameraInfo not received on %s: %s" % (self.camera_info_topic, exc)
+            )
+        self._update_camera_info(info_msg)
 
     def _setup_services(self):
         self.calib_service = rospy.Service(
@@ -107,12 +115,8 @@ class ArucoTableCalibrator:
             self._handle_calibrate,
         )
 
-    def _info_callback(self, info_msg):
-        rospy.loginfo_throttle(5.0, "Received camera_info (frame_id=%s)", info_msg.header.frame_id)
-        if self.camera_matrix is None:
-            self._update_camera_info(info_msg)
-        elif info_msg.header.frame_id and not self.camera_frame_override:
-            self.camera_frame = info_msg.header.frame_id
+    def _info_callback(self, _info_msg):
+        return
 
     def _image_callback(self, image_msg):
         if not self.camera_frame and image_msg.header.frame_id:
@@ -317,6 +321,7 @@ class ArucoTableCalibrator:
 
         self.last_calibration = transform
         self._store_calibration_params(width, height, transform.header.stamp)
+        self._save_calibration_to_disk(width, height, transform)
         rospy.loginfo(
             "Published table TF %s -> %s (origin %.3f, %.3f, %.3f)",
             self.camera_frame,
@@ -353,6 +358,154 @@ class ArucoTableCalibrator:
         rospy.set_param(ns + "/y_axis_id", int(self.y_axis_id))
         rospy.set_param(ns + "/stamp_secs", int(stamp.secs))
         rospy.set_param(ns + "/stamp_nsecs", int(stamp.nsecs))
+
+    def _save_calibration_to_disk(self, width, height, transform):
+        directory = os.path.dirname(self.calibration_store_path)
+        if directory and not os.path.isdir(directory):
+            os.makedirs(directory, exist_ok=True)
+        stamp = transform.header.stamp
+        payload = {
+            "camera_frame": transform.header.frame_id,
+            "table_frame": transform.child_frame_id,
+            "stamp": {"secs": int(stamp.secs), "nsecs": int(stamp.nsecs)},
+            "origin": {
+                "x": float(transform.transform.translation.x),
+                "y": float(transform.transform.translation.y),
+                "z": float(transform.transform.translation.z),
+            },
+            "rotation": {
+                "x": float(transform.transform.rotation.x),
+                "y": float(transform.transform.rotation.y),
+                "z": float(transform.transform.rotation.z),
+                "w": float(transform.transform.rotation.w),
+            },
+            "width_m": float(width),
+            "height_m": float(height),
+            "marker_size_m": float(self.marker_size),
+            "origin_corner": self.origin_corner,
+            "x_axis_corner": self.x_axis_corner,
+            "y_axis_corner": self.y_axis_corner,
+            "origin_id": int(self.origin_id),
+            "x_axis_id": int(self.x_axis_id),
+            "y_axis_id": int(self.y_axis_id),
+        }
+        with open(self.calibration_store_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+
+    def _load_calibration_from_disk(self):
+        if not os.path.exists(self.calibration_store_path):
+            return
+        try:
+            with open(self.calibration_store_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to load calibration from %s: %s" % (self.calibration_store_path, exc)
+            )
+
+        required_keys = [
+            "camera_frame",
+            "table_frame",
+            "stamp",
+            "origin",
+            "rotation",
+            "width_m",
+            "height_m",
+            "marker_size_m",
+            "origin_corner",
+            "x_axis_corner",
+            "y_axis_corner",
+            "origin_id",
+            "x_axis_id",
+            "y_axis_id",
+        ]
+        missing = [key for key in required_keys if key not in payload]
+        if missing:
+            raise RuntimeError(
+                "Stored calibration missing keys: %s" % ", ".join(missing)
+            )
+
+        camera_frame = payload["camera_frame"]
+        table_frame = payload["table_frame"]
+        if self.camera_frame_override and camera_frame != self.camera_frame_override:
+            raise RuntimeError(
+                "Stored calibration camera_frame %s does not match override %s"
+                % (camera_frame, self.camera_frame_override)
+            )
+        if table_frame != self.table_frame:
+            raise RuntimeError(
+                "Stored calibration table_frame %s does not match configured %s"
+                % (table_frame, self.table_frame)
+            )
+
+        if abs(float(payload["marker_size_m"]) - float(self.marker_size)) > 1e-6:
+            raise RuntimeError(
+                "Stored calibration marker_size_m %.6f does not match configured %.6f"
+                % (float(payload["marker_size_m"]), float(self.marker_size))
+            )
+        if payload["origin_corner"] != self.origin_corner:
+            raise RuntimeError(
+                "Stored calibration origin_corner %s does not match configured %s"
+                % (payload["origin_corner"], self.origin_corner)
+            )
+        if payload["x_axis_corner"] != self.x_axis_corner:
+            raise RuntimeError(
+                "Stored calibration x_axis_corner %s does not match configured %s"
+                % (payload["x_axis_corner"], self.x_axis_corner)
+            )
+        if payload["y_axis_corner"] != self.y_axis_corner:
+            raise RuntimeError(
+                "Stored calibration y_axis_corner %s does not match configured %s"
+                % (payload["y_axis_corner"], self.y_axis_corner)
+            )
+        if int(payload["origin_id"]) != self.origin_id:
+            raise RuntimeError(
+                "Stored calibration origin_id %d does not match configured %d"
+                % (int(payload["origin_id"]), self.origin_id)
+            )
+        if int(payload["x_axis_id"]) != self.x_axis_id:
+            raise RuntimeError(
+                "Stored calibration x_axis_id %d does not match configured %d"
+                % (int(payload["x_axis_id"]), self.x_axis_id)
+            )
+        if int(payload["y_axis_id"]) != self.y_axis_id:
+            raise RuntimeError(
+                "Stored calibration y_axis_id %d does not match configured %d"
+                % (int(payload["y_axis_id"]), self.y_axis_id)
+            )
+
+        stamp = payload["stamp"]
+        if not isinstance(stamp, dict) or "secs" not in stamp or "nsecs" not in stamp:
+            raise RuntimeError("Stored calibration stamp is invalid")
+        width_m = float(payload["width_m"])
+        height_m = float(payload["height_m"])
+
+        origin = payload["origin"]
+        rotation = payload["rotation"]
+        for key in ("x", "y", "z"):
+            if key not in origin:
+                raise RuntimeError("Stored calibration origin missing %s" % key)
+        for key in ("x", "y", "z", "w"):
+            if key not in rotation:
+                raise RuntimeError("Stored calibration rotation missing %s" % key)
+
+        transform = TransformStamped()
+        transform.header.stamp = rospy.Time.now()
+        transform.header.frame_id = camera_frame
+        transform.child_frame_id = table_frame
+        transform.transform.translation.x = float(origin["x"])
+        transform.transform.translation.y = float(origin["y"])
+        transform.transform.translation.z = float(origin["z"])
+        transform.transform.rotation.x = float(rotation["x"])
+        transform.transform.rotation.y = float(rotation["y"])
+        transform.transform.rotation.z = float(rotation["z"])
+        transform.transform.rotation.w = float(rotation["w"])
+
+        self.tf_broadcaster.sendTransform(transform)
+        self.last_calibration = transform
+        self.camera_frame = camera_frame
+        self._store_calibration_params(width_m, height_m, rospy.Time(int(stamp["secs"]), int(stamp["nsecs"])))
+        rospy.loginfo("Loaded table calibration from %s", self.calibration_store_path)
 
 
 def main():

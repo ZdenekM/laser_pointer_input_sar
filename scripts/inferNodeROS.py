@@ -24,6 +24,7 @@ from cv_bridge import CvBridge, CvBridgeError
 import rospy
 import message_filters
 import tf2_ros
+import tf.transformations
 from geometry_msgs.msg import TransformStamped
 from sensor_msgs.msg import Image as ROSImage
 from sensor_msgs.msg import CameraInfo
@@ -103,6 +104,87 @@ class AlphaBetaTracker2D:
         self.last_stamp = stamp
         self.missed_frames = 0
         return {"pos": self.pos.copy(), "predicted": False, "reset": False}
+
+    def _dt(self, stamp):
+        if self.last_stamp is None:
+            return self.min_dt
+        dt = (stamp - self.last_stamp).to_sec()
+        if dt <= 0.0:
+            dt = self.min_dt
+        return dt
+
+class AlphaBetaTracker1D:
+    """Alpha-beta tracker for scalar values with gating and short prediction windows."""
+
+    def __init__(self, alpha, beta, gate, max_prediction_frames, reset_on_jump=True, min_dt=1e-3):
+        if not (0.0 < alpha <= 1.0):
+            raise ValueError("depth_tracking_alpha must be in (0, 1]")
+        if beta < 0.0:
+            raise ValueError("depth_tracking_beta must be >= 0")
+        if gate <= 0.0:
+            raise ValueError("depth_tracking_gate_m must be > 0")
+        if max_prediction_frames < 0:
+            raise ValueError("depth_tracking_max_prediction_frames must be >= 0")
+        if min_dt <= 0.0:
+            raise ValueError("depth_tracking_min_dt must be > 0")
+
+        self.alpha = float(alpha)
+        self.beta = float(beta)
+        self.gate = float(gate)
+        self.max_prediction_frames = int(max_prediction_frames)
+        self.reset_on_jump = bool(reset_on_jump)
+        self.min_dt = float(min_dt)
+
+        self.initialized = False
+        self.value = None
+        self.vel = 0.0
+        self.last_stamp = None
+        self.missed_frames = 0
+
+    def reset(self):
+        self.initialized = False
+        self.value = None
+        self.vel = 0.0
+        self.last_stamp = None
+        self.missed_frames = 0
+
+    def update(self, measurement, stamp):
+        if measurement is None:
+            if not self.initialized:
+                return None
+            if self.missed_frames >= self.max_prediction_frames:
+                return None
+            dt = self._dt(stamp)
+            self.value = self.value + self.vel * dt
+            self.last_stamp = stamp
+            self.missed_frames += 1
+            return {"value": float(self.value), "predicted": True, "reset": False}
+
+        measurement = float(measurement)
+        if not self.initialized:
+            self.value = measurement
+            self.vel = 0.0
+            self.last_stamp = stamp
+            self.missed_frames = 0
+            self.initialized = True
+            return {"value": float(self.value), "predicted": False, "reset": True}
+
+        dt = self._dt(stamp)
+        pred_val = self.value + self.vel * dt
+        residual = measurement - pred_val
+
+        if self.reset_on_jump and abs(residual) > self.gate:
+            self.value = measurement
+            self.vel = 0.0
+            self.last_stamp = stamp
+            self.missed_frames = 0
+            return {"value": float(self.value), "predicted": False, "reset": True}
+
+        self.value = pred_val + self.alpha * residual
+        self.vel = self.vel + (self.beta / dt) * residual
+        self.last_stamp = stamp
+        self.missed_frames = 0
+        return {"value": float(self.value), "predicted": False, "reset": False}
 
     def _dt(self, stamp):
         if self.last_stamp is None:
@@ -199,8 +281,8 @@ class YoloModel(GenericModel) :
             self.model = torch.hub.load(yolo_path, 'custom', source='local', path=model_path, force_reload=True, device='cpu')
 
         elif device == 'gpu' :
-            self.device = torch.device('cuda')
-            self.model = torch.hub.load(yolo_path, 'custom', source='local', path=model_path, force_reload=True, device='cuda')
+            self.device = torch.device('cuda:0')
+            self.model = torch.hub.load(yolo_path, 'custom', source='local', path=model_path, force_reload=True, device='cuda:0')
        
         else:
             raise Exception("Invalid device " + device)   
@@ -280,11 +362,34 @@ class DetectorManager():
         self.tracking_predicted_confidence_scale = rospy.get_param('~tracking_predicted_confidence_scale', 1.0)
 
         ## Depth filter Params
-        self.depth_median_window = int(rospy.get_param('~depth_median_window', 3))
-        if self.depth_median_window < 1 or self.depth_median_window % 2 == 0:
-            raise ValueError("depth_median_window must be an odd integer >= 1")
         if self.tracking_predicted_confidence_scale <= 0.0:
             raise ValueError("tracking_predicted_confidence_scale must be > 0")
+        self.depth_history_max_age = float(rospy.get_param("~depth_history_max_age", 1.0))
+        if self.depth_history_max_age <= 0.0:
+            raise ValueError("depth_history_max_age must be > 0")
+        self.depth_frame_history_size = int(rospy.get_param("~depth_frame_history_size", 7))
+        if self.depth_frame_history_size < 1:
+            raise ValueError("depth_frame_history_size must be >= 1")
+        self.depth_tracking_enable = rospy.get_param("~depth_tracking_enable", True)
+        if not isinstance(self.depth_tracking_enable, bool):
+            raise ValueError("depth_tracking_enable must be a boolean")
+        depth_tracking_alpha = rospy.get_param("~depth_tracking_alpha", 0.7)
+        depth_tracking_beta = rospy.get_param("~depth_tracking_beta", 0.02)
+        depth_tracking_gate_m = rospy.get_param("~depth_tracking_gate_m", 0.2)
+        depth_tracking_max_prediction_frames = rospy.get_param("~depth_tracking_max_prediction_frames", 2)
+        depth_tracking_reset_on_jump = rospy.get_param("~depth_tracking_reset_on_jump", True)
+        self.depth_fallback_plane_enable = rospy.get_param("~depth_fallback_plane_enable", True)
+        if not isinstance(self.depth_fallback_plane_enable, bool):
+            raise ValueError("depth_fallback_plane_enable must be a boolean")
+        self.depth_fallback_plane_frame = rospy.get_param("~depth_fallback_plane_frame", "table_frame")
+        self.depth_fallback_plane_timeout = float(rospy.get_param("~depth_fallback_plane_timeout", 0.05))
+        if self.depth_fallback_plane_timeout <= 0.0:
+            raise ValueError("depth_fallback_plane_timeout must be > 0")
+        self.require_table_calibration = rospy.get_param("~require_table_calibration", True)
+        if not isinstance(self.require_table_calibration, bool):
+            raise ValueError("require_table_calibration must be a boolean")
+        self.table_frame = rospy.get_param("~table_frame", "table_frame")
+        self.calibration_param_ns = rospy.get_param("~calibration_param_ns", "/table_calibration")
         
         ### Output Params
         pub_out_keypoint_topic = rospy.get_param('~pub_out_keypoint_topic', "/detection_output_keypoint")
@@ -324,23 +429,32 @@ class DetectorManager():
         depth_image_topic = rospy.get_param('~depth_image_topic')
         camera_info_topic = rospy.get_param('~camera_info_topic')
 
+        self.cam_model = image_geometry.PinholeCameraModel()
+
         image_sub = message_filters.Subscriber(ros_image_input_topic, ROSImage, queue_size=1)
-
         depth_sub = message_filters.Subscriber(depth_image_topic, ROSImage, queue_size=1)
-        info_sub = message_filters.Subscriber(camera_info_topic, CameraInfo, queue_size=1)
 
-        sync = message_filters.ApproximateTimeSynchronizer([image_sub, depth_sub, info_sub], 5, 0.1)
+        try:
+            self.camera_info_msg = rospy.wait_for_message(camera_info_topic, CameraInfo, timeout=10.0)
+        except rospy.ROSException as exc:
+            raise RuntimeError(
+                "CameraInfo not received on %s: %s" % (camera_info_topic, exc)
+            )
+        self.cam_model.fromCameraInfo(self.camera_info_msg)
+
+        sync = message_filters.ApproximateTimeSynchronizer([image_sub, depth_sub], 5, 0.1)
         sync.registerCallback(self.__sync_clbk)
 
         self.keypoint_pub = rospy.Publisher(pub_out_keypoint_topic, KeypointImage, queue_size=10)
         if self.pub_out_images:
             self.image_pub = rospy.Publisher(pub_out_images_topic, ROSImage, queue_size=10)
         self.tf_broadcaster = tf2_ros.TransformBroadcaster()
-        self.cam_model = image_geometry.PinholeCameraModel()
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
         self.depth_header = None
         self.frame_queue = deque(maxlen=1)
         self.queue_lock = threading.Lock()
-        self.depth_history = deque(maxlen=self.depth_median_window)
+        self.depth_frame_history = deque(maxlen=self.depth_frame_history_size)
         self.last_label = 0
         self.last_confidence = 0.0
 
@@ -353,46 +467,73 @@ class DetectorManager():
                 tracking_max_prediction_frames,
                 tracking_reset_on_jump,
             )
+        self.depth_tracker = None
+        if self.depth_tracking_enable:
+            self.depth_tracker = AlphaBetaTracker1D(
+                depth_tracking_alpha,
+                depth_tracking_beta,
+                depth_tracking_gate_m,
+                depth_tracking_max_prediction_frames,
+                depth_tracking_reset_on_jump,
+            )
 
 
-    def __sync_clbk(self, rgb_msg, depth_msg, info_msg):
-        rospy.loginfo("Synced RGB/Depth/Info stamps rgb=%s depth=%s", str(rgb_msg.header.stamp), str(depth_msg.header.stamp))
-        try:
-            cv_image_input = self.bridge.imgmsg_to_cv2(rgb_msg, desired_encoding="rgb8")
-        except CvBridgeError as e:
-            rospy.logerror(e)
-            return
-
-        try:
-            depth_cv = self.bridge.imgmsg_to_cv2(depth_msg, desired_encoding="passthrough")
-        except CvBridgeError as e:
-            rospy.logerror(e)
-            return
-
+    def __sync_clbk(self, rgb_msg, depth_msg):
+        rospy.logdebug(
+            "Synced RGB/Depth stamps rgb=%s depth=%s",
+            str(rgb_msg.header.stamp),
+            str(depth_msg.header.stamp),
+        )
         with self.queue_lock:
-            self.frame_queue.append((cv_image_input, rgb_msg, depth_cv, depth_msg.header, info_msg))
-        rospy.logdebug("Buffered rgb/depth at %s, rgb shape=%s depth shape=%s", str(rgb_msg.header.stamp), cv_image_input.shape, depth_cv.shape)
+            self.frame_queue.append((rgb_msg, depth_msg))
        
     def infer(self):
         
         with self.queue_lock:
             if len(self.frame_queue) == 0:
                 if self.ros_image_input is None:
-                    rospy.loginfo_throttle(5.0, "Waiting for synced RGB/Depth/Info messages...")
+                    rospy.loginfo_throttle(5.0, "Waiting for synced RGB/Depth messages...")
                     return False
                 rospy.loginfo_throttle(2.0, "No new synced frame yet; skipping publish")
                 return False
-            cv_image_input, ros_image_input, depth_cv, depth_header, info_msg = self.frame_queue.pop()
+            ros_image_input, depth_msg = self.frame_queue.pop()
+
+        try:
+            cv_image_input = self.bridge.imgmsg_to_cv2(ros_image_input, desired_encoding="rgb8")
+        except CvBridgeError as e:
+            rospy.logerror(e)
+            return False
+
+        try:
+            depth_cv = self.bridge.imgmsg_to_cv2(depth_msg, desired_encoding="passthrough")
+        except CvBridgeError as e:
+            rospy.logerror(e)
+            return False
 
         self.cv_image_input = cv_image_input
         self.ros_image_input = ros_image_input
         self.depth_image = depth_cv
-        self.depth_header = depth_header
-        self.cam_model.fromCameraInfo(info_msg)
+        self.depth_header = depth_msg.header
+        self.__append_depth_frame(depth_cv, depth_msg.header.stamp)
 
         if self.ros_image_input is None:
-            rospy.loginfo_throttle(5.0, "Waiting for synced RGB/Depth/Info messages...")
+            rospy.loginfo_throttle(5.0, "Waiting for synced RGB/Depth messages...")
             return False
+
+        if self.require_table_calibration:
+            ready, error = self.__table_calibration_ready(self.ros_image_input.header.stamp)
+            if not ready:
+                rospy.logwarn_throttle(
+                    5.0,
+                    "Table calibration required but missing: %s",
+                    error,
+                )
+                if self.tracker is not None:
+                    self.tracker.reset()
+                if self.depth_tracker is not None:
+                    self.depth_tracker.reset()
+                self.__reset_depth_history()
+                return False
         
         with torch.no_grad():
             
@@ -450,21 +591,21 @@ class DetectorManager():
             if self.pub_out_images:
                 self.__pubImageWithRectangle()
             return
-
+        xyz, depth_assumed_plane, depth_predicted = self.__compute_xyz(tracking["pixel"], stamp)
+        predicted = bool(tracking["predicted"] or depth_predicted)
         kp_msg = self.__pubKeypoint(
             stamp,
             tracking["pixel"],
             tracking["confidence"],
             tracking["label"],
-            tracking["predicted"],
+            predicted,
+            depth_assumed_plane,
         )
         if kp_msg is None:
             if self.tracker is not None:
                 self.tracker.reset()
             self.__reset_depth_history()
             return
-
-        xyz = self.__compute_xyz(tracking["pixel"])
         self.__publish_tf(xyz, stamp)
 
         if self.pub_out_images:
@@ -519,7 +660,94 @@ class DetectorManager():
         }
 
     def __reset_depth_history(self):
-        self.depth_history.clear()
+        self.depth_frame_history.clear()
+
+    def __append_depth_frame(self, depth_image, stamp):
+        self.depth_frame_history.append((stamp.to_sec(), depth_image))
+        self.__purge_depth_frame_history(stamp)
+
+    def __purge_depth_frame_history(self, stamp):
+        now_sec = stamp.to_sec()
+        while self.depth_frame_history and (now_sec - self.depth_frame_history[0][0]) > self.depth_history_max_age:
+            self.depth_frame_history.popleft()
+
+    def __collect_depth_samples(self, depth_image, min_u, max_u, min_v, max_v):
+        samples = []
+        for vv in range(min_v, max_v + 1):
+            for uu in range(min_u, max_u + 1):
+                if depth_image.dtype == np.uint16:
+                    d = float(depth_image[vv, uu]) * 0.001
+                    if d <= 0:
+                        continue
+                else:
+                    d = float(depth_image[vv, uu])
+                    if not np.isfinite(d) or d <= 0:
+                        continue
+                samples.append(d)
+        return samples
+
+    def __table_calibration_ready(self, stamp):
+        ns = self.calibration_param_ns.rstrip("/")
+        width = rospy.get_param(ns + "/width_m", None)
+        height = rospy.get_param(ns + "/height_m", None)
+        if width is None or height is None:
+            return False, "Table calibration parameters missing"
+        try:
+            self.tf_buffer.lookup_transform(
+                self.table_frame,
+                self.ros_image_input.header.frame_id,
+                stamp,
+                rospy.Duration(0.05),
+            )
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as exc:
+            return False, f"Table calibration TF missing: {exc}"
+        return True, None
+
+    def __fallback_to_table_plane(self, pixel, stamp):
+        if not self.depth_fallback_plane_enable:
+            return None
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                self.depth_fallback_plane_frame,
+                self.ros_image_input.header.frame_id,
+                stamp,
+                rospy.Duration(self.depth_fallback_plane_timeout),
+            )
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as exc:
+            rospy.loginfo_throttle(
+                5.0,
+                "TF lookup failed for %s->%s at stamp %s: %s",
+                self.depth_fallback_plane_frame,
+                self.ros_image_input.header.frame_id,
+                str(stamp),
+                str(exc),
+            )
+            return None
+
+        ray = np.array(self.cam_model.projectPixelTo3dRay(pixel), dtype=np.float64)
+        ray_norm = np.linalg.norm(ray)
+        if ray_norm <= 1e-9:
+            rospy.loginfo_throttle(5.0, "Invalid camera ray norm for fallback; skipping")
+            return None
+        ray = ray / ray_norm
+
+        translation = transform.transform.translation
+        rotation = transform.transform.rotation
+        rot_matrix = tf.transformations.quaternion_matrix(
+            [rotation.x, rotation.y, rotation.z, rotation.w]
+        )[:3, :3]
+        origin_plane = np.array([translation.x, translation.y, translation.z], dtype=np.float64)
+        dir_plane = rot_matrix.dot(ray)
+        if abs(dir_plane[2]) < 1e-6:
+            rospy.loginfo_throttle(5.0, "Ray parallel to table plane; skipping fallback")
+            return None
+        t_param = -origin_plane[2] / dir_plane[2]
+        if t_param <= 0.0:
+            rospy.loginfo_throttle(5.0, "Table plane intersection behind camera; skipping fallback")
+            return None
+        point_plane = origin_plane + t_param * dir_plane
+        point_cam = rot_matrix.T.dot(point_plane - origin_plane)
+        return (float(point_cam[0]), float(point_cam[1]), float(point_cam[2]))
 
     def __box_center(self, box):
         if box is None:
@@ -595,7 +823,7 @@ class DetectorManager():
     """
     pixel coordinates are rounded and validated against image bounds.
     """
-    def __pubKeypoint(self, stamp, pixel=None, confidence=0.0, label=0, predicted=False):
+    def __pubKeypoint(self, stamp, pixel=None, confidence=0.0, label=0, predicted=False, depth_assumed_plane=False):
 
         msg = KeypointImage()
         if self.ros_image_input is None:
@@ -612,6 +840,7 @@ class DetectorManager():
             msg.label = 0
             msg.confidence = 0.0
             msg.predicted = False
+            msg.depth_assumed_plane = False
             self.keypoint_pub.publish(msg)
             return msg
 
@@ -628,16 +857,17 @@ class DetectorManager():
         msg.label = int(label.item()) if torch.is_tensor(label) else int(label)
         msg.confidence = float(confidence)
         msg.predicted = bool(predicted)
+        msg.depth_assumed_plane = bool(depth_assumed_plane)
 
         self.keypoint_pub.publish(msg)
         return msg
 
-    def __compute_xyz(self, pixel):
+    def __compute_xyz(self, pixel, stamp):
         if not hasattr(self, "depth_image") or self.depth_image is None:
             rospy.loginfo_throttle(5.0, "No depth image available; skipping xyz/TF publish")
-            return None
+            return None, False, False
         if pixel is None:
-            return None
+            return None, False, False
         u = int(round(pixel[0]))
         v = int(round(pixel[1]))
         window_radius = 2
@@ -648,44 +878,49 @@ class DetectorManager():
                 "Keypoint out of depth bounds (u=%d, v=%d, w=%d, h=%d); skipping xyz/TF",
                 u, v, img_w, img_h,
             )
-            return None
+            return None, False, False
 
         min_u = max(0, u - window_radius)
         max_u = min(img_w - 1, u + window_radius)
         min_v = max(0, v - window_radius)
         max_v = min(img_h - 1, v + window_radius)
 
+        self.__purge_depth_frame_history(stamp)
         depths = []
-        for vv in range(min_v, max_v + 1):
-            for uu in range(min_u, max_u + 1):
-                if self.depth_image.dtype == np.uint16:
-                    d = float(self.depth_image[vv, uu]) * 0.001
-                    if d <= 0:
-                        continue
-                else:
-                    d = float(self.depth_image[vv, uu])
-                    if not np.isfinite(d) or d <= 0:
-                        continue
-                depths.append(d)
+        for _, frame in self.depth_frame_history:
+            depths.extend(self.__collect_depth_samples(frame, min_u, max_u, min_v, max_v))
 
-        if len(depths) < 3:
+        depth_meas = None
+        if len(depths) >= 3:
+            depth_meas = float(np.median(depths))
+
+        depth_value = None
+        depth_predicted = False
+        if self.depth_tracker is not None:
+            result = self.depth_tracker.update(depth_meas, stamp)
+            if result is not None:
+                depth_value = float(result["value"])
+                depth_predicted = bool(result["predicted"])
+        else:
+            depth_value = depth_meas
+
+        if depth_value is None:
+            xyz = self.__fallback_to_table_plane((u, v), stamp)
+            if xyz is not None:
+                return xyz, True, False
             rospy.loginfo_throttle(
                 5.0,
                 "Insufficient valid depth samples (%d) around (u=%d, v=%d); skipping xyz/TF",
                 len(depths), u, v,
             )
-            return None
+            return None, False, False
 
-        depth_m = float(np.median(depths))
-        if self.depth_median_window > 1:
-            self.depth_history.append(depth_m)
-            depth_m = float(np.median(self.depth_history))
         ray = self.cam_model.projectPixelTo3dRay((u, v))
-        scale = depth_m / float(ray[2])
+        scale = depth_value / float(ray[2])
         x = float(ray[0] * scale)
         y = float(ray[1] * scale)
-        z = depth_m
-        return (x, y, z)
+        z = depth_value
+        return (x, y, z), False, depth_predicted
 
     def __publish_tf(self, xyz, stamp):
         if xyz is None:

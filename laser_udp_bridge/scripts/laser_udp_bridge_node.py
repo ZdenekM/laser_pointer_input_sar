@@ -110,6 +110,7 @@ def main():
         rospy.get_param("~projector_calibration_full3d_min_depth_m", 0.01)
     )
     projector_calibration_frame_id = "table_frame"
+    require_table_calibration = bool(rospy.get_param("~require_table_calibration", True))
 
     seq = 0
 
@@ -301,6 +302,23 @@ def main():
         }
         return payload
 
+    def _table_calibration_ready():
+        ns = calibration_param_ns.rstrip("/")
+        width = rospy.get_param(ns + "/width_m", None)
+        height = rospy.get_param(ns + "/height_m", None)
+        if width is None or height is None:
+            return False, "Table calibration parameters missing"
+        try:
+            tf_buffer.lookup_transform(
+                reference_frame,
+                camera_frame,
+                rospy.Time(0),
+                rospy.Duration(0.05),
+            )
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as exc:
+            return False, f"Table calibration TF missing: {exc}"
+        return True, None
+
     def trigger_calibration():
         payload = {"ok": False}
         try:
@@ -324,6 +342,10 @@ def main():
     latest_point = {"payload": None}
 
     def get_point_payload():
+        if require_table_calibration:
+            ready, error = _table_calibration_ready()
+            if not ready:
+                return {"ok": False, "error": error}
         with point_lock:
             payload = latest_point["payload"]
         if payload is None:
@@ -401,6 +423,10 @@ def main():
         return payload, 200
 
     def _projector_calibration_put(body):
+        if require_table_calibration:
+            ready, error = _table_calibration_ready()
+            if not ready:
+                return {"ok": False, "error": error}, 503
         try:
             payload_in = json.loads(body.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -529,6 +555,16 @@ def main():
 
     rate = rospy.Rate(rate_hz)
     while not rospy.is_shutdown():
+        if require_table_calibration:
+            ready, error = _table_calibration_ready()
+            if not ready:
+                rospy.logwarn_throttle(
+                    5.0,
+                    "Table calibration required but missing: %s",
+                    error,
+                )
+                rate.sleep()
+                continue
         with keypoint_lock:
             kp = latest_keypoint["msg"]
         if kp is None:
@@ -573,7 +609,11 @@ def main():
         t_ros_ns = kp.header.stamp.to_nsec()
 
         translation = transform.transform.translation
-        flags = 1 if getattr(kp, "predicted", False) else 0
+        flags = 0
+        if kp.predicted:
+            flags |= 1
+        if kp.depth_assumed_plane:
+            flags |= 2
         payload = struct.pack(
             "<IQffffI",
             seq,
@@ -600,6 +640,7 @@ def main():
             },
             "confidence": float(kp.confidence),
             "predicted": bool(getattr(kp, "predicted", False)),
+            "depth_assumed_plane": bool(kp.depth_assumed_plane),
         }
         with point_lock:
             latest_point["payload"] = point_payload
