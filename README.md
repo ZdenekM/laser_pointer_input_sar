@@ -1,33 +1,58 @@
-# nn_laser_spot_tracking
+# Laser Pointer Input for Spatial Augmented Reality
 
 ![logic scheme](./scheme/scheme.png)
 
-Detect (and track) in ROS a laser spot emitted from a common laser pointer.
+Interactive laser-pointer tracking for projection-based interfaces. Runs a ROS 1 stack in Docker, outputs 3D laser points over UDP and calibration data over HTTP for Unity or similar clients.
 
+This project is based on https://github.com/ADVRHumanoids/nn_laser_spot_tracking and adapted for interactive use (low-latency tracking, Unity-friendly IO, projector calibration) with a Docker-first workflow.
 
-## Requirements
-- ROS 1 Noetic (host) or Docker (see below).
-- Python 3.8+ with PyTorch (CUDA optional for GPU inference).
-- If using YOLOv5, a local clone is recommended (see setup).
-
-## Overview
-This repo provides:
+## What this provides
 - `tracking_2D` node (`scripts/inferNodeROS.py`): runs the NN, consumes RGB + depth + CameraInfo, publishes `KeypointImage` (with tracking) and TF (`laser_spot_frame`).
-- `laser_udp_bridge` (optional): publishes the `laser_spot_frame` TF as UDP packets and serves HTTP endpoints for camera pose, laser point, table size, and projector calibration.
+- `laser_udp_bridge`: publishes the `laser_spot_frame` TF as UDP packets and serves HTTP endpoints for camera pose, laser point, table size, and projector calibration.
 - `aruco_table_calibration` node (`scripts/aruco_table_calib_node.py`): on-demand ArUco-based table calibration, publishes a `table_frame` TF and stores table size on the parameter server.
 
+## Requirements (Docker)
+- Docker and docker compose.
+- Azure Kinect device (default docker stack).
+- Optional NVIDIA GPU for faster inference (see GPU build below).
 
-## Setup and running (ROS)
-In brief:
-- `tracking_2D` subscribes to `/$(arg camera)/$(arg image)` (raw), aligned depth, and matching `camera_info`.
-- It publishes a TF from the camera frame to `$(arg laser_spot_frame)` and a `KeypointImage`.
+## Quick start (Docker, primary)
+- Download the model `yolov5l6_e400_b8_tvt302010_laser_v4.pt` from https://zenodo.org/records/10471835 and place it in `models/`.
+- Run everything in Docker:
+  `docker compose up --build`
+- Toggle tracking with `TRACKING_ENABLE=true|false` in `docker-compose.yml`.
+- Set Kinect FPS with `K4A_FPS=5|15|30` (also used for `dl_rate`).
+- The full ROS stack runs inside the container; no host-side ROS installation is required.
 
-- Indentify the model/weights you want. Some are provided at [https://zenodo.org/records/10471835](https://zenodo.org/records/10471835). In any case they should have been trained on laser spots, obviously. Put the model you want to use in a folder, `models` folder of this repo is the default.
+### GPU build (Docker)
+This image is CPU by default. To build/run with CUDA wheels:
+```
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+```
 
-- [Optional, but suggested] If Yolov5 is used, better to clone their [repo](https://github.com/ultralytics/yolov5/), and provide its path to the `yolo_path` argument. Otherwise, pytorch will download it every time (since the default is "ultralytics/yolov5"). If cloning, go in the folder and install the requirments: `pip install -r requirements.txt`.
+### Debug images in Docker (no host ROS)
+If you want to view `/detection_output_img` from the container:
+```
+xhost +local:root
+docker exec -it -e DISPLAY=$DISPLAY <container_id> bash
+rosrun rqt_image_view rqt_image_view
+```
+Select `/detection_output_img` in the UI.
 
-- Run the launch file: 
-  `roslaunch nn_laser_spot_tracking laser_tracking.launch model_name:=<> camera:=<> depth_image:=<> camera_info:=<>`
+## Outputs
+### UDP
+- Port: `5005/udp` by default (see `docker-compose.yml`).
+- Packet layout (little-endian, 32 bytes): `uint32 seq`, `uint64 t_ros_ns`, `float32 x_m`, `float32 y_m`, `float32 z_m`, `float32 confidence`, `uint32 flags` (bit0 = predicted).
+- Packets are sent only when a detection exists and a valid depth/TF is available.
+- Coordinates are expressed in the `table_frame` after calibration (or in `reference_frame` when configured otherwise).
+
+### HTTP
+Default host port: `8000`.
+- `GET /camera_pose`
+- `GET /laser_point`
+- `POST /calibrate`
+- `PUT /projector_calibration`
+- `GET /projector_calibration`
 
 ## Table calibration (ArUco)
 This is optional and runs only on demand via a service call.
@@ -45,20 +70,21 @@ Run calibration (default service name):
 rosservice call /aruco_table_calibration/calibrate
 ```
 
-Query camera pose (table -> camera) and table size over HTTP:
-```
-curl http://<host>:8000/camera_pose
-```
-Query latest laser point over HTTP:
-```
-curl http://<host>:8000/laser_point
-```
-Trigger calibration over HTTP:
-```
-curl -X POST http://<host>:8000/calibrate
-```
+Notes:
+- Requires OpenCV ArUco module (opencv-contrib). The Docker image installs `opencv-contrib-python`.
+- Detection runs until `target_detections_per_marker` is reached or `capture_timeout` expires.
+- Table size is stored on the ROS parameter server (namespace `/table_calibration` by default).
+- The HTTP endpoints are hosted by `laser_udp_bridge`; keep that node running to query pose/point/size or trigger calibration.
+- If you are not using table calibration, set `laser_udp_bridge` `reference_frame` back to your camera frame.
 
-Projector calibration (HTTP, `table_frame`):
+Parameters (rosparams for `aruco_table_calibration`):
+- `target_detections_per_marker` (default: 15)
+- `capture_timeout` (default: 15.0 s)
+
+## Projector calibration (HTTP)
+Planar (homography) and full 3D (projection matrix) calibration based on `projector_pixel <-> world_point` correspondences.
+
+Example request (`table_frame`):
 ```
 curl -X PUT http://<host>:8000/projector_calibration \
   -H 'Content-Type: application/json' \
@@ -75,21 +101,11 @@ Retrieve last projector calibration:
 curl http://<host>:8000/projector_calibration
 ```
 
-Projector calibration notes:
+Notes:
 - `mode=planar` expects near-planar points and returns `H_3x3`.
 - `mode=full3d` expects non-coplanar points and returns `P_3x4`.
-
-Notes:
-- Requires OpenCV ArUco module (opencv-contrib). The Docker image installs `opencv-contrib-python`.
-- Detection runs until `target_detections_per_marker` is reached or `capture_timeout` expires.
-- Table size is stored on the ROS parameter server (namespace `/table_calibration` by default).
-- The HTTP endpoints are hosted by `laser_udp_bridge`; keep that node running to query pose/point/size or trigger calibration.
 - Projector calibration is saved to `projector_calibration_path` (default `/data/projector_calibration.json`).
-- If you are not using table calibration, set `laser_udp_bridge` `reference_frame` back to your camera frame.
-
-Parameters (rosparams for `aruco_table_calibration`):
-- `target_detections_per_marker` (default: 15)
-- `capture_timeout` (default: 15.0 s)
+- In Docker, the compose file mounts `./data:/data` for persistence.
 
 ## Tracking (alpha-beta)
 - Tracking runs in 2D image space and outputs filtered pixels in `KeypointImage`.
@@ -124,100 +140,8 @@ Parameters (rosparams for `aruco_table_calibration`):
 - **`tracking_predicted_confidence_scale`** (default: 1.0): Confidence scale for predicted frames.
 - **`depth_median_window`** (default: 3): Temporal median window for depth (odd >= 1).
 
-#### Legacy (present in launch file but unused by `tracking_2D`)
-- **`tracking_rate`**, **`cloud_detection_max_sec_diff`**, **`position_filter_enable`**, **`position_filter_bw`**, **`position_filter_damping`**
-
-## Docker prototype (Azure Kinect + UDP)
-- Prerequisites: Docker, docker compose, and an Azure Kinect device connected to the host.
-- Download the model `yolov5l6_e400_b8_tvt302010_laser_v4.pt` from [https://zenodo.org/records/10471835](https://zenodo.org/records/10471835) and place it in `models/` before building.
-- Run everything in Docker with: `docker compose up --build`
-- Toggle tracking by editing `TRACKING_ENABLE=true|false` in `docker-compose.yml` (compose environment variable).
-- Set Kinect FPS with `K4A_FPS=5|15|30` in `docker-compose.yml` (also used for `dl_rate`).
-- The full ROS stack runs inside the container; no host-side ROS installation is required.
-- The container runs privileged with host networking for USB access to the Kinect and publishes UDP port 5005/udp to the host.
-- The docker stack launches the Azure Kinect driver, `tracking_2D`, and `laser_udp_bridge`.
-- UDP packet layout (little-endian, 32 bytes): `uint32 seq`, `uint64 t_ros_ns`, `float32 x_m`, `float32 y_m`, `float32 z_m`, `float32 confidence`, `uint32 flags` (bit0 = predicted).
-- Packets are sent only when a detection exists and a valid depth/TF is available.
-- Coordinates are expressed in the `table_frame` after calibration (or in `reference_frame` when configured otherwise).
-- The HTTP endpoints for pose/size and laser point are served by `laser_udp_bridge` (default `:8000/camera_pose` and `:8000/laser_point`).
-- Projector calibration is stored on `/data` in Docker; the compose file mounts `./data:/data` for persistence.
-
-### GPU build (Docker)
-This image is CPU by default. To build/run with CUDA wheels:
-```
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
-```
-Optional overrides:
-```
-PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cu118 \
-TORCH_SUFFIX=+cu118 \
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
-```
-
-### Debug images in Docker (no host ROS)
-If you want to view `/detection_output_img` from the container:
-```
-xhost +local:root
-docker exec -it -e DISPLAY=$DISPLAY <container_id> bash
-rosrun rqt_image_view rqt_image_view
-```
-Select `/detection_output_img` in the UI.
-
-## Training new models
-- See [hhcm_yolo_training](https://github.com/ADVRHumanoids/hhcm_yolo_training) repo
-
-## Testing/comparing models
-- See [benchmark](benchmark) folder
-
-## Image dataset: 
-Available at [https://zenodo.org/records/15230870](https://zenodo.org/records/15230870)
-Two formats are given:
-- COCO format (for non-yolo models) as:
-  - a folder containing images and annotation folders.    
-    - in images, all the images (not divided by train, val, test, this is done by the code)
-    - in annotations, an instances_default.json file 
-
-- YOLOv5 pytorch format for YOLOV5 model
-  - a folder containing data.yaml file which points to two folders in the same location:
-    - train
-    - valid
-    Both have images and labels folders
-
-## Trained models: 
-Available at [https://zenodo.org/records/10471835](https://zenodo.org/records/10471835)
-
-## Troubleshoot
-If a too old version of `setuptools` is found on the system, Ultralytics Yolo will upgrade it. Recently, when upgrading to >71, this errors occurs:
-`AttributeError: module 'importlib_metadata' has no attribute 'EntryPoints'`
-You should solve downgrading a bit setuptools: `pip3 install setuptools==70.3.0`. See [here](https://github.com/pypa/setuptools/issues/4478)
-
-## Papers
-
-[https://www.sciencedirect.com/science/article/pii/S092188902500140X](https://www.sciencedirect.com/science/article/pii/S092188902500140X)
-@article{LaserJournal,
-  title = {An intuitive tele-collaboration interface exploring laser-based interaction and behavior trees},
-  author = {Torielli, Davide and Muratore, Luca and Tsagarakis, Nikos},
-  journal = {Robotics and Autonomous Systems},
-  volume = {193},
-  pages = {105054},
-  year = {2025},
-  issn = {0921-8890},
-  doi = {https://doi.org/10.1016/j.robot.2025.105054},
-  url = {https://www.sciencedirect.com/science/article/pii/S092188902500140X},
-  keywords = {Human-robot interface, Human-centered robotics, Visual servoing, Motion planning},
-  dimensions = {true},
-}
-
-[https://ieeexplore.ieee.org/document/10602529](https://ieeexplore.ieee.org/document/10602529)
-```
-@ARTICLE{10602529,
-  author={Torielli, Davide and Bertoni, Liana and Muratore, Luca and Tsagarakis, Nikos},
-  journal={IEEE Robotics and Automation Letters}, 
-  title={A Laser-Guided Interaction Interface for Providing Effective Robot Assistance to People With Upper Limbs Impairments}, 
-  year={2024},
-  volume={9},
-  number={9},
-  pages={7653-7660},
-  keywords={Robots;Lasers;Task analysis;Keyboards;Magnetic heads;Surface emitting lasers;Grippers;Human-robot collaboration;physically assistive devices;visual servoing},
-  doi={10.1109/LRA.2024.3430709}}
-```
+## Models and training
+- Place model weights in `models/`.
+- The original authors provide trained models and datasets at https://zenodo.org/records/10471835 and https://zenodo.org/records/15230870.
+- Training workflows and dataset details are documented in the upstream repo: https://github.com/ADVRHumanoids/nn_laser_spot_tracking.
+- For YOLOv5 training pipelines, see https://github.com/ADVRHumanoids/hhcm_yolo_training.
