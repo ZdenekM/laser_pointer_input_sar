@@ -13,7 +13,7 @@ Detect (and track) in ROS a laser spot emitted from a common laser pointer.
 ## Overview
 This repo provides:
 - `tracking_2D` node (`scripts/inferNodeROS.py`): runs the NN, consumes RGB + depth + CameraInfo, publishes `KeypointImage` (with tracking) and TF (`laser_spot_frame`).
-- `laser_udp_bridge` (optional): publishes the `laser_spot_frame` TF as UDP packets and serves HTTP endpoints for camera pose, laser point, and table size.
+- `laser_udp_bridge` (optional): publishes the `laser_spot_frame` TF as UDP packets and serves HTTP endpoints for camera pose, laser point, table size, and projector calibration.
 - `aruco_table_calibration` node (`scripts/aruco_table_calib_node.py`): on-demand ArUco-based table calibration, publishes a `table_frame` TF and stores table size on the parameter server.
 
 
@@ -58,11 +58,33 @@ Trigger calibration over HTTP:
 curl -X POST http://<host>:8000/calibrate
 ```
 
+Projector calibration (HTTP, `table_frame`):
+```
+curl -X PUT http://<host>:8000/projector_calibration \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "mode": "planar",
+    "projector": { "width_px": 1920, "height_px": 1080 },
+    "points": [
+      { "projector": { "u": 100, "v": 120 }, "world": { "x": 0.12, "y": 0.34, "z": 0.0 } }
+    ]
+  }'
+```
+Retrieve last projector calibration:
+```
+curl http://<host>:8000/projector_calibration
+```
+
+Projector calibration notes:
+- `mode=planar` expects near-planar points and returns `H_3x3`.
+- `mode=full3d` expects non-coplanar points and returns `P_3x4`.
+
 Notes:
 - Requires OpenCV ArUco module (opencv-contrib). The Docker image installs `opencv-contrib-python`.
 - Detection runs until `target_detections_per_marker` is reached or `capture_timeout` expires.
 - Table size is stored on the ROS parameter server (namespace `/table_calibration` by default).
 - The HTTP endpoints are hosted by `laser_udp_bridge`; keep that node running to query pose/point/size or trigger calibration.
+- Projector calibration is saved to `projector_calibration_path` (default `/data/projector_calibration.json`).
 - If you are not using table calibration, set `laser_udp_bridge` `reference_frame` back to your camera frame.
 
 Parameters (rosparams for `aruco_table_calibration`):
@@ -118,6 +140,7 @@ Parameters (rosparams for `aruco_table_calibration`):
 - Packets are sent only when a detection exists and a valid depth/TF is available.
 - Coordinates are expressed in the `table_frame` after calibration (or in `reference_frame` when configured otherwise).
 - The HTTP endpoints for pose/size and laser point are served by `laser_udp_bridge` (default `:8000/camera_pose` and `:8000/laser_point`).
+- Projector calibration is stored on `/data` in Docker; the compose file mounts `./data:/data` for persistence.
 
 ### GPU build (Docker)
 This image is CPU by default. To build/run with CUDA wheels:

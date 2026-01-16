@@ -15,8 +15,12 @@
   <arg name="http_port" default="8000" />
   <arg name="http_pose_path" default="/camera_pose" />
   <arg name="http_calibrate_path" default="/calibrate" />
+  <arg name="http_projector_calibration_path" default="/projector_calibration" />
   <arg name="calibration_service" default="/aruco_table_calibration/calibrate" />
   <arg name="calibration_service_timeout" default="2.0" />
+  <arg name="projector_calibration_path" default="/data/projector_calibration.json" />
+  <arg name="projector_calibration_plane_rms_tolerance_m" default="0.01" />
+  <arg name="projector_calibration_full3d_min_depth_m" default="0.01" />
 
   <node pkg="laser_udp_bridge" type="laser_udp_bridge_node.py" name="laser_udp_bridge" output="screen">
     <param name="reference_frame" value="$(arg reference_frame)" />
@@ -32,7 +36,11 @@
     <param name="http_port" value="$(arg http_port)" />
     <param name="http_pose_path" value="$(arg http_pose_path)" />
     <param name="http_calibrate_path" value="$(arg http_calibrate_path)" />
+    <param name="http_projector_calibration_path" value="$(arg http_projector_calibration_path)" />
     <param name="calibration_service" value="$(arg calibration_service)" />
     <param name="calibration_service_timeout" value="$(arg calibration_service_timeout)" />
+    <param name="projector_calibration_path" value="$(arg projector_calibration_path)" />
+    <param name="projector_calibration_plane_rms_tolerance_m" value="$(arg projector_calibration_plane_rms_tolerance_m)" />
+    <param name="projector_calibration_full3d_min_depth_m" value="$(arg projector_calibration_full3d_min_depth_m)" />
   </node>
 </launch>

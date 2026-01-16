@@ -10,6 +10,10 @@
   <arg name="http_port" default="8000" />
   <arg name="http_pose_path" default="/camera_pose" />
   <arg name="http_calibrate_path" default="/calibrate" />
+  <arg name="http_projector_calibration_path" default="/projector_calibration" />
+  <arg name="projector_calibration_path" default="/data/projector_calibration.json" />
+  <arg name="projector_calibration_plane_rms_tolerance_m" default="0.01" />
+  <arg name="projector_calibration_full3d_min_depth_m" default="0.01" />
   <arg name="tracking_enable" default="true" />
   <group ns="k4a">
     <include file="$(find azure_kinect_ros_driver)/launch/driver.launch">
@@ -44,5 +48,9 @@
     <arg name="http_port" value="$(arg http_port)" />
     <arg name="http_pose_path" value="$(arg http_pose_path)" />
     <arg name="http_calibrate_path" value="$(arg http_calibrate_path)" />
+    <arg name="http_projector_calibration_path" value="$(arg http_projector_calibration_path)" />
+    <arg name="projector_calibration_path" value="$(arg projector_calibration_path)" />
+    <arg name="projector_calibration_plane_rms_tolerance_m" value="$(arg projector_calibration_plane_rms_tolerance_m)" />
+    <arg name="projector_calibration_full3d_min_depth_m" value="$(arg projector_calibration_full3d_min_depth_m)" />
   </include>
 </launch>

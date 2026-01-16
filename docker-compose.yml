@@ -19,11 +19,14 @@ services:
       - TRACKING_ENABLE=false
       - HTTP_POSE_PATH=/camera_pose
       - HTTP_CALIBRATE_PATH=/calibrate
+      - HTTP_PROJECTOR_CALIBRATION_PATH=/projector_calibration
+      - PROJECTOR_CALIBRATION_PATH=/data/projector_calibration.json
     ports:
       - "5005:5005/udp"
     volumes:
       - /dev:/dev
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./data:/data
     command:
       - bash
       - -lc
@@ -34,3 +37,5 @@ services:
         k4a_fps:=$${K4A_FPS}
         http_pose_path:=$${HTTP_POSE_PATH}
         http_calibrate_path:=$${HTTP_CALIBRATE_PATH}
+        http_projector_calibration_path:=$${HTTP_PROJECTOR_CALIBRATION_PATH}
+        projector_calibration_path:=$${PROJECTOR_CALIBRATION_PATH}
