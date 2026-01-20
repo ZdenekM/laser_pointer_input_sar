@@ -16,7 +16,7 @@
   <arg name="tracking_alpha" default="0.85" />
   <arg name="tracking_beta" default="0.005" />
   <arg name="tracking_gate_px" default="30.0" />
-  <arg name="tracking_max_prediction_frames" default="2" />
+  <arg name="tracking_max_prediction_frames" default="6" />
   <arg name="tracking_reset_on_jump" default="true" />
   <arg name="tracking_predicted_confidence_scale" default="1.0" />
   <arg name="depth_median_window" default="3" />

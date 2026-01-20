@@ -357,7 +357,7 @@ class DetectorManager():
         tracking_alpha = rospy.get_param('~tracking_alpha', 0.85)
         tracking_beta = rospy.get_param('~tracking_beta', 0.005)
         tracking_gate_px = rospy.get_param('~tracking_gate_px', 30.0)
-        tracking_max_prediction_frames = rospy.get_param('~tracking_max_prediction_frames', 2)
+        tracking_max_prediction_frames = rospy.get_param('~tracking_max_prediction_frames', 6)
         tracking_reset_on_jump = rospy.get_param('~tracking_reset_on_jump', True)
         self.tracking_predicted_confidence_scale = rospy.get_param('~tracking_predicted_confidence_scale', 1.0)
 
@@ -615,18 +615,39 @@ class DetectorManager():
 
         if self.pub_out_images:
             if measurement is None:
-                self.__pubImageWithRectangle()
+                self.__pubImageWithRectangle(
+                    tracking_pixel=tracking["pixel"],
+                    tracking_predicted=tracking["predicted"],
+                )
             elif self.pub_out_all_keypoints and boxes is not None and labels is not None:
-                self.__pubImageWithAllRectangles(boxes, labels)
+                self.__pubImageWithAllRectangles(
+                    boxes,
+                    labels,
+                    tracking_pixel=tracking["pixel"],
+                    tracking_predicted=tracking["predicted"],
+                )
             else:
-                self.__pubImageWithRectangle(box, score, label)
+                self.__pubImageWithRectangle(
+                    box,
+                    score,
+                    label,
+                    tracking_pixel=tracking["pixel"],
+                    tracking_predicted=tracking["predicted"],
+                )
 
     def __update_tracking(self, stamp, measurement, label, score):
         if measurement is None:
             if self.tracker is None:
                 return None
+            was_initialized = self.tracker.initialized
             result = self.tracker.update(None, stamp)
             if result is None:
+                if was_initialized:
+                    rospy.loginfo_throttle(
+                        2.0,
+                        "Tracking lost: exceeded max_prediction_frames=%d",
+                        self.tracker.max_prediction_frames,
+                    )
                 return None
             if result["reset"]:
                 self.__reset_depth_history()
@@ -652,10 +673,17 @@ class DetectorManager():
                 "label": label,
             }
 
+        was_initialized = self.tracker.initialized
         result = self.tracker.update(measurement, stamp)
         if result is None:
             return None
         if result["reset"]:
+            if was_initialized:
+                rospy.loginfo_throttle(
+                    2.0,
+                    "Tracking reset on jump: gate_px=%.1f",
+                    self.tracker.gate_px,
+                )
             self.__reset_depth_history()
         return {
             "pixel": result["pos"],
@@ -761,7 +789,20 @@ class DetectorManager():
         v = round(box[1].item() + (box[3].item() - box[1].item()) / 2)
         return (u, v)
 
-    def __pubImageWithRectangle(self, box=None, score=None, label=None):
+    def __draw_tracking_marker(self, image, pixel, predicted):
+        if pixel is None:
+            return
+        height, width = image.shape[:2]
+        x, y = int(round(pixel[0])), int(round(pixel[1]))
+        if x < 0 or y < 0 or x >= width or y >= height:
+            return
+        color = (255, 255, 0) if predicted else (0, 255, 0)
+        size = 6
+        thickness = 2
+        cv2.line(image, (x - size, y), (x + size, y), color, thickness)
+        cv2.line(image, (x, y - size), (x, y + size), color, thickness)
+
+    def __pubImageWithRectangle(self, box=None, score=None, label=None, tracking_pixel=None, tracking_predicted=False):
         
         #first convert back to unit8
         self.cv_image_output = torchvision.transforms.functional.convert_image_dtype(
@@ -778,6 +819,8 @@ class DetectorManager():
                           (round(box[0].item()), round(box[1].item())),
                           (round(box[2].item()), round(box[3].item())),
                           (255,0,0), 3)
+
+        self.__draw_tracking_marker(self.cv_image_output, tracking_pixel, tracking_predicted)
         
         #if label:
             #cv2.putText(self.cv_image_output, str(label.item()), (round(box[0].item()), round(box[3].item()+10)), 
@@ -794,7 +837,7 @@ class DetectorManager():
         
         self.image_pub.publish(self.ros_image_output)
         
-    def __pubImageWithAllRectangles(self, box=None, label=None):
+    def __pubImageWithAllRectangles(self, box=None, label=None, tracking_pixel=None, tracking_predicted=False):
         
         #first convert back to unit8
         self.cv_image_output = torchvision.transforms.functional.convert_image_dtype(
@@ -813,6 +856,8 @@ class DetectorManager():
                         cv2.putText(self.cv_image_output, str(label[i].item()), (round(b[0].item()), round(b[3].item()+10)), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
                 i = i+1
+
+        self.__draw_tracking_marker(self.cv_image_output, tracking_pixel, tracking_predicted)
         
         #cv2.imshow("test_boxes", self.cv_image_output)
         #cv2.waitKey()

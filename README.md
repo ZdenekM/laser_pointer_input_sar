@@ -180,6 +180,7 @@ Notes:
 - Tracking runs in 2D image space and outputs filtered pixels in `KeypointImage`.
 - `KeypointImage.predicted` is true when no measurement was available in the current frame.
 - Depth is computed from the filtered pixel and smoothed with a short median window.
+- Debug images show detection boxes plus a tracking cross (green = measured, yellow = predicted).
 
 ### Launch file arguments (`laser_tracking.launch`)
 #### Required
@@ -204,7 +205,7 @@ Notes:
 - **`tracking_alpha`** (default: 0.85): Alpha parameter for tracking (higher = less lag).
 - **`tracking_beta`** (default: 0.005): Beta parameter for tracking velocity update.
 - **`tracking_gate_px`** (default: 30.0): Gating threshold in pixels before reset.
-- **`tracking_max_prediction_frames`** (default: 2): Max predicted frames without measurement.
+- **`tracking_max_prediction_frames`** (default: 6): Max predicted frames without measurement.
 - **`tracking_reset_on_jump`** (default: true): Reset tracker when jump exceeds gate.
 - **`tracking_predicted_confidence_scale`** (default: 1.0): Confidence scale for predicted frames.
 - **`depth_history_max_age`** (default: 1.0): Max age (s) for cached depth frames.
