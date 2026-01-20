@@ -4,6 +4,7 @@ ARG PYTORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
 ARG TORCH_VERSION="2.0.1"
 ARG TORCHVISION_VERSION="0.15.2"
 ARG TORCH_SUFFIX="+cpu"
+ARG MODEL_NAME="yolov5l6_e400_b8_tvt302010_laser_v4.pt"
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV ACCEPT_EULA=Y
@@ -105,6 +106,9 @@ WORKDIR /catkin_ws/src
 COPY . /catkin_ws/src/nn_laser_spot_tracking
 
 COPY config/xorg.conf /etc/X11/xorg.conf
+
+RUN test -f "/catkin_ws/src/nn_laser_spot_tracking/models/${MODEL_NAME}" || \
+    (echo "Missing model file models/${MODEL_NAME}. Download it or set build arg MODEL_NAME to your .pt file." >&2; exit 1)
 
 RUN mv /catkin_ws/src/nn_laser_spot_tracking/third_party/Azure_Kinect_ROS_Driver /catkin_ws/src/Azure_Kinect_ROS_Driver && \
     mv /catkin_ws/src/nn_laser_spot_tracking/laser_udp_bridge /catkin_ws/src/laser_udp_bridge

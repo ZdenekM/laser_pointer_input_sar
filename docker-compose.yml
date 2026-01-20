@@ -7,6 +7,7 @@ services:
         TORCH_VERSION: 2.0.1
         TORCHVISION_VERSION: 0.15.2
         TORCH_SUFFIX: +cpu
+        MODEL_NAME: yolov5l6_e400_b8_tvt302010_laser_v4.pt
     network_mode: host
     privileged: true
     environment:

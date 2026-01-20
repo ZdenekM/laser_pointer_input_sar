@@ -4,6 +4,7 @@ services:
       args:
         PYTORCH_INDEX_URL: https://download.pytorch.org/whl/cu118
         TORCH_SUFFIX: +cu118
+        MODEL_NAME: yolov5l6_e400_b8_tvt302010_laser_v4.pt
     gpus: all
     environment:
       - TRACKING_ENABLE=true

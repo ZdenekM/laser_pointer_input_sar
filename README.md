@@ -20,6 +20,7 @@ This project is based on https://github.com/ADVRHumanoids/nn_laser_spot_tracking
 - Initialize submodules:
   `git submodule update --init`
 - Download the model `yolov5l6_e400_b8_tvt302010_laser_v4.pt` from https://zenodo.org/records/10471835 and place it in `models/`.
+- The Docker build now fails fast if the model file is missing (override with build arg `MODEL_NAME` for custom models).
 - Run everything in Docker:
   `docker compose up --build`
 - Toggle tracking with `TRACKING_ENABLE=true|false` in `docker-compose.yml`.
