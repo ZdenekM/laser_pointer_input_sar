@@ -36,3 +36,4 @@ This file defines how agents should work in this repository.
 - Flag risks and assumptions.
 - If unsure about intent, stop and ask.
 - Documentation should describe the current state in neutral, present-tense language; avoid change-log phrasing like "now".
+- Do not include explicit timestamps in log messages; ROS log headers already include them.

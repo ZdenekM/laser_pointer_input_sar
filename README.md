@@ -192,6 +192,7 @@ Notes:
   status line with explicit reasons (e.g., `no_scores`, `below_threshold`, `reset_on_jump`,
   `exceeded_predictions`, `table_calibration_missing`).
 - The periodic status log suppresses repeated `state=lost` lines unless the underlying status changes.
+- Log messages omit explicit timestamps; ROS already prints them.
 
 ### Detection image stream (browser)
 The Docker launch starts `web_video_server` on port `8080` so you can view debug images

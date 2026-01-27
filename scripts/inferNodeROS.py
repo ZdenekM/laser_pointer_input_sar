@@ -575,21 +575,18 @@ class DetectorManager():
         self.last_tracking_reason = reason
         if previous_state == new_state:
             return
-        stamp_str = str(stamp)
         if detail is None:
             rospy.loginfo(
-                "Tracking state %s -> %s at %s (reason=%s)",
+                "Tracking state %s -> %s (reason=%s)",
                 previous_state,
                 new_state,
-                stamp_str,
                 reason,
             )
             return
         rospy.loginfo(
-            "Tracking state %s -> %s at %s (reason=%s, %s)",
+            "Tracking state %s -> %s (reason=%s, %s)",
             previous_state,
             new_state,
-            stamp_str,
             reason,
             detail,
         )
@@ -687,8 +684,7 @@ class DetectorManager():
                 self.last_best_score = None
                 self.__set_detection_reason(
                     "table_calibration_missing",
-                    "Table calibration missing at %s: %s",
-                    str(stamp),
+                    "Table calibration missing: %s",
                     error,
                 )
                 if self.tracker is not None:
@@ -721,8 +717,7 @@ class DetectorManager():
             self.inference_stamp = self.ros_image_input.header.stamp
             self.__set_detection_reason(
                 "no_scores",
-                "No detections at %s (scores empty)",
-                str(self.inference_stamp),
+                "No detections (scores empty)",
             )
             self.__publish_tracking(self.inference_stamp, None)
             self.__maybe_log_status(self.inference_stamp)
@@ -748,10 +743,9 @@ class DetectorManager():
         if best_score < self.detection_confidence_threshold:
             self.__set_detection_reason(
                 "below_threshold",
-                "Best score %.3f below threshold %.3f at %s",
+                "Best score %.3f below threshold %.3f",
                 best_score,
                 self.detection_confidence_threshold,
-                str(self.inference_stamp),
             )
             self.__publish_tracking(self.inference_stamp, None)
             self.__maybe_log_status(self.inference_stamp)
@@ -760,9 +754,8 @@ class DetectorManager():
         measurement = self.__box_center(self.out['boxes'][self.best_index])
         self.__set_detection_reason(
             "measurement",
-            "Accepted measurement score=%.3f at %s",
+            "Accepted measurement score=%.3f",
             best_score,
-            str(self.inference_stamp),
         )
         self.__publish_tracking(
             self.inference_stamp,
@@ -841,8 +834,7 @@ class DetectorManager():
                 # Only log the loss once until we recover.
                 if was_initialized and reason == "exceeded_predictions" and not self.loss_log_emitted:
                     rospy.loginfo(
-                        "Tracking lost at %s: exceeded max_prediction_frames=%d (missed_frames=%d, last_detection_reason=%s)",
-                        str(stamp),
+                        "Tracking lost: exceeded max_prediction_frames=%d (missed_frames=%d, last_detection_reason=%s)",
                         self.tracker.max_prediction_frames,
                         prev_missed_frames,
                         self.last_detection_reason,
@@ -904,8 +896,7 @@ class DetectorManager():
         if result["reason"] == "reset_on_jump" and was_initialized:
             rospy.loginfo_throttle(
                 self.debug_log_throttle_sec,
-                "Tracking reset on jump at %s: residual_px=%.1f gate_px=%.1f dt=%.4f",
-                str(stamp),
+                "Tracking reset on jump: residual_px=%.1f gate_px=%.1f dt=%.4f",
                 result["residual_norm"],
                 result["gate_px"],
                 result["dt"],
@@ -988,10 +979,9 @@ class DetectorManager():
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as exc:
             rospy.loginfo_throttle(
                 5.0,
-                "TF lookup failed for %s->%s at stamp %s: %s",
+                "TF lookup failed for %s->%s: %s",
                 self.depth_fallback_plane_frame,
                 self.ros_image_input.header.frame_id,
-                str(stamp),
                 str(exc),
             )
             return None

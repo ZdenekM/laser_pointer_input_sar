@@ -527,6 +527,9 @@ def main():
                     "points_used": int(world_points.shape[0]),
                     "plane_rms_m": plane_rms,
                     "reprojection_rms_px": rms,
+                    "plane_origin_m": centroid.tolist(),
+                    "plane_basis_u": basis_u.tolist(),
+                    "plane_basis_v": basis_v.tolist(),
                     "H_3x3": h.tolist(),
                 }
             else:
@@ -629,9 +632,8 @@ def main():
         if kp.confidence <= 0.0:
             rospy.loginfo_throttle(
                 5.0,
-                "Skipping keypoint with non-positive confidence (%.3f) at stamp %s",
+                "Skipping keypoint with non-positive confidence (%.3f)",
                 kp.confidence,
-                str(kp.header.stamp),
             )
             rate.sleep()
             continue
@@ -652,10 +654,9 @@ def main():
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
             rospy.loginfo_throttle(
                 2.0,
-                "TF lookup failed for %s->%s at stamp %s: %s",
+                "TF lookup failed for %s->%s: %s",
                 reference_frame,
                 target_frame,
-                str(kp.header.stamp),
                 str(e),
             )
             rate.sleep()
