@@ -77,14 +77,16 @@ class CalibrationHttpHandler(BaseHTTPRequestHandler):
             self._send_json(payload, status)
             self._log_request("GET", path, status, payload)
             return
-        self._log_request("GET", path, 404, {"ok": False, "error": "Not Found"})
-        self.send_error(404, "Not Found")
+        payload = {"ok": False, "error": "Not Found"}
+        self._send_json(payload, 404)
+        self._log_request("GET", path, 404, payload)
 
     def do_POST(self):
         path = self.path.split("?")[0]
         if path != self.server.calibrate_path:
-            self._log_request("POST", path, 404, {"ok": False, "error": "Not Found"})
-            self.send_error(404, "Not Found")
+            payload = {"ok": False, "error": "Not Found"}
+            self._send_json(payload, 404)
+            self._log_request("POST", path, 404, payload)
             return
         payload = self.server.calibrate_fn()
         status = 200 if payload.get("ok", False) else 503
@@ -94,8 +96,9 @@ class CalibrationHttpHandler(BaseHTTPRequestHandler):
     def do_PUT(self):
         path = self.path.split("?")[0]
         if path != self.server.projector_calibration_path:
-            self._log_request("PUT", path, 404, {"ok": False, "error": "Not Found"})
-            self.send_error(404, "Not Found")
+            payload = {"ok": False, "error": "Not Found"}
+            self._send_json(payload, 404)
+            self._log_request("PUT", path, 404, payload)
             return
         content_length = int(self.headers.get("Content-Length", "0"))
         if content_length <= 0:
@@ -627,8 +630,7 @@ def main():
         if last_sent_stamp is not None and kp.header.stamp == last_sent_stamp:
             rospy.loginfo_throttle(
                 2.0,
-                "Skipping duplicate keypoint stamp %s (already sent)",
-                str(kp.header.stamp),
+                "Skipping duplicate keypoint stamp (already sent)",
             )
             rate.sleep()
             continue

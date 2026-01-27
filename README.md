@@ -70,6 +70,7 @@ docker compose -f docker-compose.yml -f docker-compose.x11-ssh.yml up --build
 Default host port: `8000`.
 - Requests are logged by `laser_udp_bridge`: successful poll endpoints (`/camera_pose`, `/laser_point`)
   are `DEBUG`, while failures and non-poll endpoints log at `INFO/WARN/ERROR` with explicit reasons.
+- Error responses return JSON with `{ok:false,error:\"...\"}` (including `404 Not Found`).
 - `GET /camera_pose`
 - `GET /laser_point`
 - `POST /calibrate`
@@ -213,8 +214,8 @@ Notes:
 - **`model_path`** (default: "$(find nn_laser_spot_tracking)/models/"): Path to the model directory.
 - **`yolo_path`** (default: "ultralytics/yolov5"): Local YOLOv5 repo path.
 - **`image`** (default: "color/image_raw"): Color image topic name (Kinect publishes `bgra8`; the node accepts `bgra8` or `rgb8` and converts to `rgb8` internally).
-- **`dl_rate`** (default: 30): Main loop rate (inference is blocking, so actual rate may be lower).
-- **`detection_confidence_threshold`** (default: 0.55): Confidence threshold for detections.
+- **`dl_rate`** (default: 5): Main loop rate (inference is blocking, so actual rate may be lower).
+- **`detection_confidence_threshold`** (default: 0.70): Confidence threshold for detections.
 - **`keypoint_topic`** (default: "/nn_laser_spot_tracking/detection_output_keypoint"): `KeypointImage` output.
 - **`laser_spot_frame`** (default: "laser" in `laser_tracking.launch`, "laser_spot_frame" in the docker launch).
 - **`pub_out_images`** (default: true): Publish debug images with rectangle.
@@ -224,8 +225,8 @@ Notes:
 - **`tracking_enable`** (default: true): Enable 2D alpha-beta tracking.
 - **`tracking_alpha`** (default: 0.85): Alpha parameter for tracking (higher = less lag).
 - **`tracking_beta`** (default: 0.005): Beta parameter for tracking velocity update.
-- **`tracking_gate_px`** (default: 30.0): Gating threshold in pixels before reset.
-- **`tracking_max_prediction_frames`** (default: 6): Max predicted frames without measurement.
+- **`tracking_gate_px`** (default: 40.0): Gating threshold in pixels before reset.
+- **`tracking_max_prediction_frames`** (default: 10): Max predicted frames without measurement.
 - **`tracking_reset_on_jump`** (default: true): Reset tracker when jump exceeds gate.
 - **`tracking_predicted_confidence_scale`** (default: 1.0): Confidence scale for predicted frames.
 - **`debug_log_throttle_sec`** (default: 1.0): Throttle period for `DEBUG` detection logs (and jump-reset notices).

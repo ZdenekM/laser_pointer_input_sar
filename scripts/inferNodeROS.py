@@ -818,10 +818,12 @@ class DetectorManager():
                 return None
             was_initialized = self.tracker.initialized
             prev_missed_frames = self.tracker.missed_frames
+            prev_state = self.tracking_state
             result = self.tracker.update(None, stamp)
             if result is None:
                 reason = self.tracker.last_reason
-                if was_initialized and reason == "exceeded_predictions":
+                # Only log the loss once per transition into the lost state.
+                if was_initialized and reason == "exceeded_predictions" and prev_state != "lost":
                     rospy.loginfo(
                         "Tracking lost at %s: exceeded max_prediction_frames=%d (missed_frames=%d, last_detection_reason=%s)",
                         str(stamp),
