@@ -73,6 +73,7 @@ Default host port: `8000`.
 - `PUT /projector_calibration` logs include `ok=<true|false>` plus `reproj_rms_px`, `plane_rms_m`,
   and `error=...` when present.
 - Error responses return JSON with `{ok:false,error:\"...\"}` (including `404 Not Found`).
+- Duplicate keypoint stamps are logged at `DEBUG`.
 - `GET /camera_pose`
 - `GET /laser_point`
 - `POST /calibrate`
@@ -190,6 +191,7 @@ Notes:
   `INFO` reports tracking state transitions (`lost -> tracking -> predicting`) and a periodic
   status line with explicit reasons (e.g., `no_scores`, `below_threshold`, `reset_on_jump`,
   `exceeded_predictions`, `table_calibration_missing`).
+- The periodic status log suppresses repeated `state=lost` lines unless the underlying status changes.
 
 ### Detection image stream (browser)
 The Docker launch starts `web_video_server` on port `8080` so you can view debug images
@@ -226,7 +228,7 @@ Notes:
 - **`log_level`** (default: INFO, docker launch only): Logger level for `tracking_2D`.
 - **`tracking_enable`** (default: true): Enable 2D alpha-beta tracking.
 - **`tracking_alpha`** (default: 0.85): Alpha parameter for tracking (higher = less lag).
-- **`tracking_beta`** (default: 0.005): Beta parameter for tracking velocity update.
+- **`tracking_beta`** (default: 0.003): Beta parameter for tracking velocity update.
 - **`tracking_gate_px`** (default: 40.0): Gating threshold in pixels before reset.
 - **`tracking_max_prediction_frames`** (default: 10): Max predicted frames without measurement.
 - **`tracking_reset_on_jump`** (default: true): Reset tracker when jump exceeds gate.

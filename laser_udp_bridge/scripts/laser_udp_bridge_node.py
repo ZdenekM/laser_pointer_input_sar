@@ -636,7 +636,7 @@ def main():
             rate.sleep()
             continue
         if last_sent_stamp is not None and kp.header.stamp == last_sent_stamp:
-            rospy.loginfo_throttle(
+            rospy.logdebug_throttle(
                 2.0,
                 "Skipping duplicate keypoint stamp (already sent)",
             )

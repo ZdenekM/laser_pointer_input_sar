@@ -538,6 +538,7 @@ class DetectorManager():
         self.last_tracking_reason = "init"
         self.tracking_state = "lost"
         self.loss_log_emitted = False
+        self.last_status_signature = None
 
         self.tracker = None
         if self.tracking_enable:
@@ -602,6 +603,17 @@ class DetectorManager():
         self.status_log_next_time = rospy.Time.from_sec(stamp_sec + self.status_log_period_sec)
         best_score_str = "n/a" if self.last_best_score is None else f"{self.last_best_score:.3f}"
         missed_frames = self.tracker.missed_frames if self.tracker is not None else 0
+        signature = (
+            self.tracking_state,
+            self.last_tracking_reason,
+            self.last_detection_reason,
+            self.last_detection_count,
+            self.last_best_score,
+            round(self.last_confidence, 6),
+            missed_frames,
+        )
+        if self.tracking_state == "lost" and signature == self.last_status_signature:
+            return
         rospy.loginfo(
             "Tracking status state=%s tracking_reason=%s detection_reason=%s detections=%d best_score=%s last_conf=%.3f missed_frames=%d",
             self.tracking_state,
@@ -612,6 +624,7 @@ class DetectorManager():
             self.last_confidence,
             missed_frames,
         )
+        self.last_status_signature = signature
 
 
     def __sync_clbk(self, rgb_msg, depth_msg):
