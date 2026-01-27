@@ -190,6 +190,7 @@ Notes:
 - Debug images are generated and published only when the image topic has subscribers.
 - When table calibration is required, detections are filtered to the calibrated table bounds before tracking.
 - The table-bounds filter caches the table transform and refreshes it when calibration parameters change.
+- When the tracker is initialized, the selected detection is the nearest above-threshold candidate to the predicted position.
 - Logging is split by intent: per-frame detection diagnostics are `DEBUG` (throttled), while
   `INFO` reports tracking state transitions (`lost -> tracking -> predicting`) and a periodic
   status line with explicit reasons (e.g., `no_scores`, `below_threshold`, `reset_on_jump`,

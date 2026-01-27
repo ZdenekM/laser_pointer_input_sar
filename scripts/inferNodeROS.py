@@ -789,10 +789,8 @@ class DetectorManager():
             self.__perf_add(perf_stamp, time.perf_counter() - loop_start, infer_time_sec)
             return True
         
-        #IDK if the best box is always the first one, so lets the argmax
-        self.best_index = int(torch.argmax(self.out['scores']))
-        best_score = float(self.out['scores'][self.best_index].item())
         self.last_detection_count = len(self.out['scores'])
+        self.best_index, best_score = self.__select_detection_index(self.inference_stamp)
         self.last_best_score = best_score
         rospy.logdebug_throttle(
             self.debug_log_throttle_sec,
@@ -804,7 +802,7 @@ class DetectorManager():
         
         #show_image_with_boxes(img, self.out['boxes'][self.best_index], self.out['labels'][self.best_index])
         
-        if best_score < self.detection_confidence_threshold:
+        if self.best_index is None:
             self.__set_detection_reason(
                 "below_threshold",
                 "Best score %.3f below threshold %.3f",
@@ -1121,6 +1119,60 @@ class DetectorManager():
         self.out["boxes"] = torch.index_select(self.out["boxes"], 0, index_tensor)
         self.out["labels"] = torch.index_select(self.out["labels"], 0, index_tensor)
         return kept_count, filtered_outside
+
+    def __tracker_predicted_pos(self, stamp):
+        if self.tracker is None or not self.tracker.initialized or self.tracker.pos is None:
+            return None, None
+        if self.tracker.last_stamp is None:
+            dt = self.tracker.min_dt
+        else:
+            dt = (stamp - self.tracker.last_stamp).to_sec()
+            if dt <= 0.0:
+                dt = self.tracker.min_dt
+        pred = self.tracker.pos + self.tracker.vel * dt
+        return pred.copy(), dt
+
+    def __select_detection_index(self, stamp):
+        scores = self.out["scores"]
+        total = len(scores)
+        if total == 0:
+            return None, 0.0
+        best_idx = int(torch.argmax(scores))
+        best_score = float(scores[best_idx].item())
+        above_idx = torch.nonzero(scores >= self.detection_confidence_threshold).flatten()
+        if above_idx.numel() == 0:
+            return None, best_score
+
+        pred_pos, pred_dt = self.__tracker_predicted_pos(stamp)
+        if pred_pos is not None:
+            best_dist = None
+            best_gated_idx = None
+            for idx in above_idx.tolist():
+                pixel = self.__box_center(self.out["boxes"][idx])
+                if pixel is None:
+                    continue
+                dist = float(np.linalg.norm(np.array(pixel, dtype=np.float64) - pred_pos))
+                if best_dist is None or dist < best_dist:
+                    best_dist = dist
+                    best_gated_idx = idx
+            if best_gated_idx is not None:
+                gated_score = float(scores[best_gated_idx].item())
+                rospy.logdebug_throttle(
+                    self.debug_log_throttle_sec,
+                    "Gated selection idx=%d dist_px=%.1f score=%.3f dt=%.4f candidates=%d",
+                    best_gated_idx,
+                    best_dist,
+                    gated_score,
+                    pred_dt if pred_dt is not None else 0.0,
+                    int(above_idx.numel()),
+                )
+                return best_gated_idx, best_score
+
+        # Fallback: choose the highest score among detections above threshold.
+        above_scores = scores[above_idx]
+        rel_idx = int(torch.argmax(above_scores))
+        selected_idx = int(above_idx[rel_idx].item())
+        return selected_idx, best_score
 
     def __fallback_to_table_plane(self, pixel, stamp):
         if not self.depth_fallback_plane_enable:
