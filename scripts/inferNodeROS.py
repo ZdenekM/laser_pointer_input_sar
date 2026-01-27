@@ -33,7 +33,11 @@ from nn_laser_spot_tracking.msg import KeypointImage
 import image_geometry
 
 class AlphaBetaTracker2D:
-    """Alpha-beta tracker for 2D pixel positions with gating and short prediction windows."""
+    """Alpha-beta tracker for 2D pixel positions with gating and short prediction windows.
+
+    The tracker records simple diagnostics (reason, dt, residual norm, gate) so callers can
+    explain resets and tracking loss explicitly in logs.
+    """
 
     def __init__(self, alpha, beta, gate_px, max_prediction_frames, reset_on_jump=True, min_dt=1e-3):
         if not (0.0 < alpha <= 1.0):
@@ -59,6 +63,9 @@ class AlphaBetaTracker2D:
         self.vel = np.zeros(2, dtype=np.float64)
         self.last_stamp = None
         self.missed_frames = 0
+        self.last_reason = "uninitialized"
+        self.last_dt = None
+        self.last_residual_norm = None
 
     def reset(self):
         self.initialized = False
@@ -66,18 +73,39 @@ class AlphaBetaTracker2D:
         self.vel = np.zeros(2, dtype=np.float64)
         self.last_stamp = None
         self.missed_frames = 0
+        self.last_reason = "reset"
+        self.last_dt = None
+        self.last_residual_norm = None
 
     def update(self, measurement, stamp):
         if measurement is None:
             if not self.initialized:
+                self.last_reason = "predict_not_initialized"
+                self.last_dt = None
+                self.last_residual_norm = None
                 return None
             if self.missed_frames >= self.max_prediction_frames:
+                self.last_reason = "exceeded_predictions"
+                self.last_dt = 0.0
+                self.last_residual_norm = None
                 return None
             dt = self._dt(stamp)
             self.pos = self.pos + self.vel * dt
             self.last_stamp = stamp
             self.missed_frames += 1
-            return {"pos": self.pos.copy(), "predicted": True, "reset": False}
+            self.last_reason = "predict"
+            self.last_dt = dt
+            self.last_residual_norm = None
+            return {
+                "pos": self.pos.copy(),
+                "predicted": True,
+                "reset": False,
+                "reason": self.last_reason,
+                "dt": dt,
+                "residual_norm": None,
+                "gate_px": self.gate_px,
+                "missed_frames": self.missed_frames,
+            }
 
         measurement = np.array(measurement, dtype=np.float64)
         if not self.initialized:
@@ -86,24 +114,61 @@ class AlphaBetaTracker2D:
             self.last_stamp = stamp
             self.missed_frames = 0
             self.initialized = True
-            return {"pos": self.pos.copy(), "predicted": False, "reset": True}
+            self.last_reason = "init"
+            self.last_dt = self.min_dt
+            self.last_residual_norm = 0.0
+            return {
+                "pos": self.pos.copy(),
+                "predicted": False,
+                "reset": True,
+                "reason": self.last_reason,
+                "dt": self.last_dt,
+                "residual_norm": self.last_residual_norm,
+                "gate_px": self.gate_px,
+                "missed_frames": self.missed_frames,
+            }
 
         dt = self._dt(stamp)
         pred_pos = self.pos + self.vel * dt
         residual = measurement - pred_pos
+        residual_norm = float(np.linalg.norm(residual))
 
-        if self.reset_on_jump and np.linalg.norm(residual) > self.gate_px:
+        if self.reset_on_jump and residual_norm > self.gate_px:
             self.pos = measurement
             self.vel = np.zeros(2, dtype=np.float64)
             self.last_stamp = stamp
             self.missed_frames = 0
-            return {"pos": self.pos.copy(), "predicted": False, "reset": True}
+            self.last_reason = "reset_on_jump"
+            self.last_dt = dt
+            self.last_residual_norm = residual_norm
+            return {
+                "pos": self.pos.copy(),
+                "predicted": False,
+                "reset": True,
+                "reason": self.last_reason,
+                "dt": dt,
+                "residual_norm": residual_norm,
+                "gate_px": self.gate_px,
+                "missed_frames": self.missed_frames,
+            }
 
         self.pos = pred_pos + self.alpha * residual
         self.vel = self.vel + (self.beta / dt) * residual
         self.last_stamp = stamp
         self.missed_frames = 0
-        return {"pos": self.pos.copy(), "predicted": False, "reset": False}
+        self.last_reason = "update"
+        self.last_dt = dt
+        self.last_residual_norm = residual_norm
+        return {
+            "pos": self.pos.copy(),
+            "predicted": False,
+            "reset": False,
+            "reason": self.last_reason,
+            "dt": dt,
+            "residual_norm": residual_norm,
+            "gate_px": self.gate_px,
+            "missed_frames": self.missed_frames,
+        }
 
     def _dt(self, stamp):
         if self.last_stamp is None:
@@ -360,6 +425,16 @@ class DetectorManager():
         tracking_max_prediction_frames = rospy.get_param('~tracking_max_prediction_frames', 6)
         tracking_reset_on_jump = rospy.get_param('~tracking_reset_on_jump', True)
         self.tracking_predicted_confidence_scale = rospy.get_param('~tracking_predicted_confidence_scale', 1.0)
+        self.debug_log_throttle_sec = float(rospy.get_param("~debug_log_throttle_sec", 1.0))
+        if self.debug_log_throttle_sec <= 0.0:
+            raise ValueError("debug_log_throttle_sec must be > 0")
+        self.status_log_enable = rospy.get_param("~status_log_enable", True)
+        if not isinstance(self.status_log_enable, bool):
+            raise ValueError("status_log_enable must be a boolean")
+        self.status_log_period_sec = float(rospy.get_param("~status_log_period_sec", 1.0))
+        if self.status_log_period_sec <= 0.0:
+            raise ValueError("status_log_period_sec must be > 0")
+        self.status_log_next_time = rospy.Time(0)
 
         ## Depth filter Params
         if self.tracking_predicted_confidence_scale <= 0.0:
@@ -457,6 +532,11 @@ class DetectorManager():
         self.depth_frame_history = deque(maxlen=self.depth_frame_history_size)
         self.last_label = 0
         self.last_confidence = 0.0
+        self.last_best_score = None
+        self.last_detection_count = 0
+        self.last_detection_reason = "init"
+        self.last_tracking_reason = "init"
+        self.tracking_state = "lost"
 
         self.tracker = None
         if self.tracking_enable:
@@ -476,6 +556,58 @@ class DetectorManager():
                 depth_tracking_max_prediction_frames,
                 depth_tracking_reset_on_jump,
             )
+
+    def __set_detection_reason(self, reason, msg_fmt=None, *args):
+        self.last_detection_reason = reason
+        if msg_fmt is not None:
+            rospy.logdebug_throttle(self.debug_log_throttle_sec, msg_fmt, *args)
+
+    def __set_tracking_state(self, new_state, reason, stamp, detail=None):
+        if new_state not in ("lost", "tracking", "predicting"):
+            raise ValueError(f"Unsupported tracking state '{new_state}'")
+        previous_state = self.tracking_state
+        self.tracking_state = new_state
+        self.last_tracking_reason = reason
+        if previous_state == new_state:
+            return
+        stamp_str = str(stamp)
+        if detail is None:
+            rospy.loginfo(
+                "Tracking state %s -> %s at %s (reason=%s)",
+                previous_state,
+                new_state,
+                stamp_str,
+                reason,
+            )
+            return
+        rospy.loginfo(
+            "Tracking state %s -> %s at %s (reason=%s, %s)",
+            previous_state,
+            new_state,
+            stamp_str,
+            reason,
+            detail,
+        )
+
+    def __maybe_log_status(self, stamp):
+        if not self.status_log_enable:
+            return
+        stamp_sec = stamp.to_sec()
+        if stamp_sec < self.status_log_next_time.to_sec():
+            return
+        self.status_log_next_time = rospy.Time.from_sec(stamp_sec + self.status_log_period_sec)
+        best_score_str = "n/a" if self.last_best_score is None else f"{self.last_best_score:.3f}"
+        missed_frames = self.tracker.missed_frames if self.tracker is not None else 0
+        rospy.loginfo(
+            "Tracking status state=%s tracking_reason=%s detection_reason=%s detections=%d best_score=%s last_conf=%.3f missed_frames=%d",
+            self.tracking_state,
+            self.last_tracking_reason,
+            self.last_detection_reason,
+            self.last_detection_count,
+            best_score_str,
+            self.last_confidence,
+            missed_frames,
+        )
 
 
     def __sync_clbk(self, rgb_msg, depth_msg):
@@ -533,11 +665,22 @@ class DetectorManager():
                     "Table calibration required but missing: %s",
                     error,
                 )
+                stamp = self.ros_image_input.header.stamp
+                self.last_detection_count = 0
+                self.last_best_score = None
+                self.__set_detection_reason(
+                    "table_calibration_missing",
+                    "Table calibration missing at %s: %s",
+                    str(stamp),
+                    error,
+                )
                 if self.tracker is not None:
                     self.tracker.reset()
                 if self.depth_tracker is not None:
                     self.depth_tracker.reset()
+                self.__set_tracking_state("lost", "table_calibration_missing", stamp, error)
                 self.__reset_depth_history()
+                self.__maybe_log_status(stamp)
                 return False
         
         with torch.no_grad():
@@ -556,28 +699,54 @@ class DetectorManager():
             #images[0] = images[0].detach().cpu()
         
         if (len(self.out['scores']) == 0):
-            rospy.loginfo("No detections in this frame (scores empty)")
+            self.last_detection_count = 0
+            self.last_best_score = None
             self.inference_stamp = self.ros_image_input.header.stamp
+            self.__set_detection_reason(
+                "no_scores",
+                "No detections at %s (scores empty)",
+                str(self.inference_stamp),
+            )
             self.__publish_tracking(self.inference_stamp, None)
+            self.__maybe_log_status(self.inference_stamp)
             return False
         
         #IDK if the best box is always the first one, so lets the argmax
         self.best_index = int(torch.argmax(self.out['scores']))
         best_score = float(self.out['scores'][self.best_index].item())
-        rospy.loginfo("Detections=%d, best_score=%.3f, threshold=%.3f",
-                      len(self.out['scores']), best_score, self.detection_confidence_threshold)
+        self.last_detection_count = len(self.out['scores'])
+        self.last_best_score = best_score
+        rospy.logdebug_throttle(
+            self.debug_log_throttle_sec,
+            "Detections=%d best_score=%.3f threshold=%.3f",
+            self.last_detection_count,
+            best_score,
+            self.detection_confidence_threshold,
+        )
         
         #show_image_with_boxes(img, self.out['boxes'][self.best_index], self.out['labels'][self.best_index])
         
         # Keep ROS timestamps aligned with the source image
         self.inference_stamp = self.ros_image_input.header.stamp
         if best_score < self.detection_confidence_threshold:
-            rospy.loginfo("Best score %.3f below threshold %.3f; skipping measurement",
-                          best_score, self.detection_confidence_threshold)
+            self.__set_detection_reason(
+                "below_threshold",
+                "Best score %.3f below threshold %.3f at %s",
+                best_score,
+                self.detection_confidence_threshold,
+                str(self.inference_stamp),
+            )
             self.__publish_tracking(self.inference_stamp, None)
+            self.__maybe_log_status(self.inference_stamp)
             return True
 
         measurement = self.__box_center(self.out['boxes'][self.best_index])
+        self.__set_detection_reason(
+            "measurement",
+            "Accepted measurement score=%.3f at %s",
+            best_score,
+            str(self.inference_stamp),
+        )
         self.__publish_tracking(
             self.inference_stamp,
             measurement,
@@ -587,6 +756,7 @@ class DetectorManager():
             self.out['boxes'],
             self.out['labels'],
         )
+        self.__maybe_log_status(self.inference_stamp)
         return True
 
     def __publish_tracking(self, stamp, measurement, label=None, score=None, box=None, boxes=None, labels=None):
@@ -609,6 +779,7 @@ class DetectorManager():
         if kp_msg is None:
             if self.tracker is not None:
                 self.tracker.reset()
+            self.__set_tracking_state("lost", "keypoint_publish_failed", stamp)
             self.__reset_depth_history()
             return
         self.__publish_tf(xyz, stamp)
@@ -638,25 +809,52 @@ class DetectorManager():
     def __update_tracking(self, stamp, measurement, label, score):
         if measurement is None:
             if self.tracker is None:
+                self.__set_tracking_state(
+                    "lost",
+                    "no_tracker_no_measurement",
+                    stamp,
+                    f"detection_reason={self.last_detection_reason}",
+                )
                 return None
             was_initialized = self.tracker.initialized
+            prev_missed_frames = self.tracker.missed_frames
             result = self.tracker.update(None, stamp)
             if result is None:
-                if was_initialized:
-                    rospy.loginfo_throttle(
-                        2.0,
-                        "Tracking lost: exceeded max_prediction_frames=%d",
+                reason = self.tracker.last_reason
+                if was_initialized and reason == "exceeded_predictions":
+                    rospy.loginfo(
+                        "Tracking lost at %s: exceeded max_prediction_frames=%d (missed_frames=%d, last_detection_reason=%s)",
+                        str(stamp),
                         self.tracker.max_prediction_frames,
+                        prev_missed_frames,
+                        self.last_detection_reason,
                     )
+                self.__set_tracking_state(
+                    "lost",
+                    reason,
+                    stamp,
+                    f"detection_reason={self.last_detection_reason}",
+                )
                 return None
             if result["reset"]:
                 self.__reset_depth_history()
             confidence = self.last_confidence * self.tracking_predicted_confidence_scale
+            self.__set_tracking_state(
+                "predicting",
+                result["reason"],
+                stamp,
+                f"missed_frames={result['missed_frames']} detection_reason={self.last_detection_reason}",
+            )
             return {
                 "pixel": result["pos"],
                 "predicted": True,
                 "confidence": confidence,
                 "label": self.last_label,
+                "reason": result["reason"],
+                "dt": result["dt"],
+                "residual_norm": result["residual_norm"],
+                "gate_px": result["gate_px"],
+                "missed_frames": result["missed_frames"],
             }
 
         if score is None or label is None:
@@ -666,30 +864,52 @@ class DetectorManager():
         self.last_confidence = confidence
 
         if self.tracker is None:
+            self.__set_tracking_state(
+                "tracking",
+                "measurement_no_tracker",
+                stamp,
+                f"confidence={confidence:.3f}",
+            )
             return {
                 "pixel": measurement,
                 "predicted": False,
                 "confidence": confidence,
                 "label": label,
+                "reason": "measurement_no_tracker",
             }
 
         was_initialized = self.tracker.initialized
         result = self.tracker.update(measurement, stamp)
         if result is None:
             return None
+        if result["reason"] == "reset_on_jump" and was_initialized:
+            rospy.loginfo_throttle(
+                self.debug_log_throttle_sec,
+                "Tracking reset on jump at %s: residual_px=%.1f gate_px=%.1f dt=%.4f",
+                str(stamp),
+                result["residual_norm"],
+                result["gate_px"],
+                result["dt"],
+            )
         if result["reset"]:
-            if was_initialized:
-                rospy.loginfo_throttle(
-                    2.0,
-                    "Tracking reset on jump: gate_px=%.1f",
-                    self.tracker.gate_px,
-                )
             self.__reset_depth_history()
+        detail = f"confidence={confidence:.3f}"
+        if result["residual_norm"] is not None:
+            detail = (
+                f"{detail} residual_px={result['residual_norm']:.1f} "
+                f"gate_px={result['gate_px']:.1f} dt={result['dt']:.4f}"
+            )
+        self.__set_tracking_state("tracking", result["reason"], stamp, detail)
         return {
             "pixel": result["pos"],
             "predicted": result["predicted"],
             "confidence": confidence,
             "label": label,
+            "reason": result["reason"],
+            "dt": result["dt"],
+            "residual_norm": result["residual_norm"],
+            "gate_px": result["gate_px"],
+            "missed_frames": result["missed_frames"],
         }
 
     def __reset_depth_history(self):

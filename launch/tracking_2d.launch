@@ -19,6 +19,9 @@
   <arg name="tracking_max_prediction_frames" default="6" />
   <arg name="tracking_reset_on_jump" default="true" />
   <arg name="tracking_predicted_confidence_scale" default="1.0" />
+  <arg name="debug_log_throttle_sec" default="1.0" />
+  <arg name="status_log_enable" default="true" />
+  <arg name="status_log_period_sec" default="1.0" />
   <arg name="depth_median_window" default="3" />
   <arg name="depth_history_max_age" default="1.0" />
   <arg name="depth_frame_history_size" default="7" />
@@ -61,6 +64,9 @@
     <param name="tracking_max_prediction_frames" value="$(arg tracking_max_prediction_frames)" />
     <param name="tracking_reset_on_jump" value="$(arg tracking_reset_on_jump)" />
     <param name="tracking_predicted_confidence_scale" value="$(arg tracking_predicted_confidence_scale)" />
+    <param name="debug_log_throttle_sec" value="$(arg debug_log_throttle_sec)" />
+    <param name="status_log_enable" value="$(arg status_log_enable)" />
+    <param name="status_log_period_sec" value="$(arg status_log_period_sec)" />
     <param name="depth_median_window" value="$(arg depth_median_window)" />
     <param name="depth_history_max_age" value="$(arg depth_history_max_age)" />
     <param name="depth_frame_history_size" value="$(arg depth_frame_history_size)" />

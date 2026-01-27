@@ -25,44 +25,88 @@ class CalibrationHttpHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _is_poll_path(self, path):
+        poll_paths = getattr(self.server, "poll_paths", set())
+        return path in poll_paths
+
+    def _log_request(self, method, path, status, payload=None):
+        client = self.client_address[0] if self.client_address else "unknown"
+        ok = isinstance(payload, dict) and bool(payload.get("ok", False))
+        error = payload.get("error") if isinstance(payload, dict) else None
+        mode = payload.get("mode") if isinstance(payload, dict) else None
+        points_used = payload.get("points_used") if isinstance(payload, dict) else None
+
+        # Successful polling endpoints can be very chatty; keep them at DEBUG.
+        if self._is_poll_path(path) and status == 200 and ok:
+            rospy.logdebug("HTTP %s %s -> %d (client=%s)", method, path, status, client)
+            return
+
+        details = []
+        if mode:
+            details.append(f"mode={mode}")
+        if points_used is not None:
+            details.append(f"points_used={points_used}")
+        if error:
+            details.append(f"error={error}")
+        detail_str = "" if not details else " " + " ".join(details)
+        message = f"HTTP {method} {path} -> {status} (client={client}){detail_str}"
+
+        if status >= 500:
+            rospy.logerr(message)
+        elif status >= 400 or (isinstance(payload, dict) and not ok):
+            rospy.logwarn(message)
+        else:
+            rospy.loginfo(message)
+
     def do_GET(self):
         path = self.path.split("?")[0]
         if path == self.server.pose_path:
             payload = self.server.pose_payload_fn()
             status = 200 if payload.get("ok", False) else 503
             self._send_json(payload, status)
+            self._log_request("GET", path, status, payload)
             return
         if path == self.server.point_path:
             payload = self.server.point_payload_fn()
             status = 200 if payload.get("ok", False) else 503
             self._send_json(payload, status)
+            self._log_request("GET", path, status, payload)
             return
         if path == self.server.projector_calibration_path:
             payload, status = self.server.projector_calibration_get_fn()
             self._send_json(payload, status)
+            self._log_request("GET", path, status, payload)
             return
+        self._log_request("GET", path, 404, {"ok": False, "error": "Not Found"})
         self.send_error(404, "Not Found")
 
     def do_POST(self):
-        if self.path.split("?")[0] != self.server.calibrate_path:
+        path = self.path.split("?")[0]
+        if path != self.server.calibrate_path:
+            self._log_request("POST", path, 404, {"ok": False, "error": "Not Found"})
             self.send_error(404, "Not Found")
             return
         payload = self.server.calibrate_fn()
         status = 200 if payload.get("ok", False) else 503
         self._send_json(payload, status)
+        self._log_request("POST", path, status, payload)
 
     def do_PUT(self):
-        if self.path.split("?")[0] != self.server.projector_calibration_path:
+        path = self.path.split("?")[0]
+        if path != self.server.projector_calibration_path:
+            self._log_request("PUT", path, 404, {"ok": False, "error": "Not Found"})
             self.send_error(404, "Not Found")
             return
         content_length = int(self.headers.get("Content-Length", "0"))
         if content_length <= 0:
             payload = {"ok": False, "error": "Empty request body"}
             self._send_json(payload, 400)
+            self._log_request("PUT", path, 400, payload)
             return
         body = self.rfile.read(content_length)
         payload, status = self.server.projector_calibration_put_fn(body)
         self._send_json(payload, status)
+        self._log_request("PUT", path, status, payload)
 
     def log_message(self, format, *args):
         return
@@ -517,6 +561,7 @@ def main():
             server.point_path = http_point_path
             server.calibrate_path = http_calibrate_path
             server.projector_calibration_path = http_projector_calibration_path
+            server.poll_paths = {http_pose_path, http_point_path}
             server.pose_payload_fn = get_calibration_payload
             server.point_payload_fn = get_point_payload
             server.calibrate_fn = trigger_calibration

@@ -55,6 +55,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-noetic-joint-state-publisher \
     ros-noetic-robot-state-publisher \
     ros-noetic-rqt-image-view \
+    ros-noetic-web-video-server \
     libopencv-dev \
     libopencv-contrib-dev \
     libsoundio1 \
@@ -69,6 +70,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pocl-opencl-icd \
     xvfb \
     && rm -rf /var/lib/apt/lists/*
+
+# Bootstrap a modern pip to avoid crashes in the distro-pip stack.
+RUN curl -sS https://bootstrap.pypa.io/pip/3.8/get-pip.py -o /tmp/get-pip.py \
+    && python3 /tmp/get-pip.py \
+    && rm /tmp/get-pip.py
 
 RUN set -e; \
     echo "libk4a1.4 libk4a1.4/accepted-eula-hash string 0f5d5c5de396e4fee4c0753a21fee0c1ed726cf0316204edda484f08cb266d76" | debconf-set-selections; \

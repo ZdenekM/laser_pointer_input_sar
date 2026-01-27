@@ -27,6 +27,12 @@
   <arg name="projector_calibration_plane_rms_tolerance_m" default="0.01" />
   <arg name="projector_calibration_full3d_min_depth_m" default="0.01" />
   <arg name="tracking_enable" default="true" />
+  <arg name="debug_log_throttle_sec" default="1.0" />
+  <arg name="status_log_enable" default="true" />
+  <arg name="status_log_period_sec" default="1.0" />
+  <arg name="web_video_server_enable" default="true" />
+  <arg name="web_video_server_address" default="0.0.0.0" />
+  <arg name="web_video_server_port" default="8080" />
   <arg name="table_calibration_store_path" default="/data/table_calibration.json" />
   <group ns="k4a">
     <include file="$(find azure_kinect_ros_driver)/launch/driver.launch">
@@ -44,6 +50,9 @@
   <include file="$(find nn_laser_spot_tracking)/launch/tracking_2d.launch">
     <arg name="log_level" value="$(arg log_level)" />
     <arg name="tracking_enable" value="$(arg tracking_enable)" />
+    <arg name="debug_log_throttle_sec" value="$(arg debug_log_throttle_sec)" />
+    <arg name="status_log_enable" value="$(arg status_log_enable)" />
+    <arg name="status_log_period_sec" value="$(arg status_log_period_sec)" />
     <arg name="dl_rate" value="$(arg k4a_fps)" />
     <arg name="depth_history_max_age" value="$(arg depth_history_max_age)" />
     <arg name="depth_frame_history_size" value="$(arg depth_frame_history_size)" />
@@ -61,6 +70,16 @@
     <arg name="calibration_param_ns" value="$(arg calibration_param_ns)" />
     <arg name="required" value="$(arg nodes_required)" />
   </include>
+
+  <node if="$(arg web_video_server_enable)"
+        pkg="web_video_server"
+        type="web_video_server"
+        name="web_video_server"
+        output="screen"
+        required="false">
+    <param name="address" value="$(arg web_video_server_address)" />
+    <param name="port" value="$(arg web_video_server_port)" />
+  </node>
 
   <include file="$(find nn_laser_spot_tracking)/launch/aruco_table_calibration.launch">
     <arg name="table_frame" value="$(arg table_frame)" />

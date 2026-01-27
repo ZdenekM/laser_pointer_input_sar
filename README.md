@@ -20,7 +20,7 @@ This project is based on https://github.com/ADVRHumanoids/nn_laser_spot_tracking
 - Initialize submodules:
   `git submodule update --init`
 - Download the model `yolov5l6_e400_b8_tvt302010_laser_v4.pt` from https://zenodo.org/records/10471835 and place it in `models/`.
-- The Docker build now fails fast if the model file is missing (override with build arg `MODEL_NAME` for custom models).
+- The Docker build fails fast if the model file is missing (override with build arg `MODEL_NAME` for custom models).
 - Run everything in Docker:
   `docker compose up --build`
 - Toggle tracking with `TRACKING_ENABLE=true|false` in `docker-compose.yml`.
@@ -68,6 +68,8 @@ docker compose -f docker-compose.yml -f docker-compose.x11-ssh.yml up --build
 
 ### HTTP
 Default host port: `8000`.
+- Requests are logged by `laser_udp_bridge`: successful poll endpoints (`/camera_pose`, `/laser_point`)
+  are `DEBUG`, while failures and non-poll endpoints log at `INFO/WARN/ERROR` with explicit reasons.
 - `GET /camera_pose`
 - `GET /laser_point`
 - `POST /calibrate`
@@ -181,6 +183,24 @@ Notes:
 - `KeypointImage.predicted` is true when no measurement was available in the current frame.
 - Depth is computed from the filtered pixel and smoothed with a short median window.
 - Debug images show detection boxes plus a tracking cross (green = measured, yellow = predicted).
+- Logging is split by intent: per-frame detection diagnostics are `DEBUG` (throttled), while
+  `INFO` reports tracking state transitions (`lost -> tracking -> predicting`) and a periodic
+  status line with explicit reasons (e.g., `no_scores`, `below_threshold`, `reset_on_jump`,
+  `exceeded_predictions`, `table_calibration_missing`).
+
+### Detection image stream (browser)
+The Docker launch starts `web_video_server` on port `8080` so you can view debug images
+without `rqt` inside the container.
+
+Example stream URL:
+
+```text
+http://localhost:8080/stream?topic=/detection_output_img
+```
+
+Notes:
+- The compose stack uses `network_mode: host`, so `localhost:8080` works on the host.
+- Rebuild the image after this change so `ros-noetic-web-video-server` is installed.
 
 ### Launch file arguments (`laser_tracking.launch`)
 #### Required
@@ -208,6 +228,9 @@ Notes:
 - **`tracking_max_prediction_frames`** (default: 6): Max predicted frames without measurement.
 - **`tracking_reset_on_jump`** (default: true): Reset tracker when jump exceeds gate.
 - **`tracking_predicted_confidence_scale`** (default: 1.0): Confidence scale for predicted frames.
+- **`debug_log_throttle_sec`** (default: 1.0): Throttle period for `DEBUG` detection logs (and jump-reset notices).
+- **`status_log_enable`** (default: true): Enable periodic `INFO` tracking status logs.
+- **`status_log_period_sec`** (default: 1.0): Period (s) for the `INFO` status log.
 - **`depth_history_max_age`** (default: 1.0): Max age (s) for cached depth frames.
 - **`depth_frame_history_size`** (default: 7): Number of recent depth frames used to collect samples around the pixel.
 - **`depth_tracking_enable`** (default: true): Enable alpha-beta tracking on depth values.
